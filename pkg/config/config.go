@@ -19,6 +19,9 @@ type Config struct {
 // ComfyUIConfig 场景图使用 ComfyUI 文生图时的默认配置
 type ComfyUIConfig struct {
 	BaseURL string `mapstructure:"base_url"` // 例如 http://127.0.0.1:8188
+	// 工作流含 BaiduTranslateNode 时可选填写
+	BaiduTranslateAppID  string `mapstructure:"baidu_translate_app_id"`
+	BaiduTranslateAppKey string `mapstructure:"baidu_translate_app_key"`
 }
 
 type AppConfig struct {

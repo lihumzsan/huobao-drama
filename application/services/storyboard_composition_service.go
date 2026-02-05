@@ -396,14 +396,19 @@ func (s *StoryboardCompositionService) GenerateSceneImage(req *GenerateSceneImag
 			return nil, fmt.Errorf("ComfyUI 未配置：请在设置中填写 ComfyUI 服务器地址，或 config 中配置 comfyui.base_url")
 		}
 		client := &comfyui.Client{BaseURL: baseURL, HTTP: nil}
-		imageURL, err := client.Generate(&comfyui.Params{
+		params := &comfyui.Params{
 			Prompt: prompt,
 			Width:  1080,
 			Height: 1920,
 			Steps:  25,
 			CFG:    1,
 			Seed:   0,
-		})
+		}
+		if s.config != nil {
+			params.BaiduTranslateAppID = s.config.ComfyUI.BaiduTranslateAppID
+			params.BaiduTranslateAppKey = s.config.ComfyUI.BaiduTranslateAppKey
+		}
+		imageURL, err := client.Generate(params)
 		if err != nil {
 			return nil, fmt.Errorf("ComfyUI 生成失败: %w", err)
 		}

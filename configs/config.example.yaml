@@ -28,9 +28,12 @@ ai:
   default_image_provider: "openai"
   default_video_provider: "doubao"
 
-# 场景图使用 ComfyUI 文生图时的默认服务器地址（可选；界面可单独填写）
+# 场景图使用 ComfyUI 文生图：base_url 即 ComfyUI 服务器地址（与界面「ComfyUI 服务器地址」一致）
 comfyui:
   base_url: "http://127.0.0.1:8188"
+  # 工作流含 BaiduTranslateNode 时填写
+  # baidu_translate_app_id: "你的百度翻译 AppID"
+  # baidu_translate_app_key: "你的百度翻译 AppKey"
 
 style:
   default_style: '{"style_config":{"style_base":["Japanese anime style","Post-apocalyptic isekai narrative aesthetic","soft painterly cel-shading","official animation screenshot","high-production key animation frame","consistent visual tone across all elements"],"lighting":["muted ambient light with warm golden highlights","soft diffused shadows","volumetric lighting to emphasize character-background contrast","color palette: muted grays/blood reds for background, clean whites/soft neutrals for character"],"texture":["smooth cel animation texture","subtle gradient shading","minimal film grain","consistent color harmony between character and environment"],"composition":["dynamic contrast between relaxed foreground character and chaotic blurred post-apocalyptic background","shallow depth of field","layered visual hierarchy to highlight protagonist"],"style_references":["in the visual style of Frieren: Beyond Journey''s End","relaxed character aesthetic inspired by Mob Psycho 100","professional anime production quality"],"consistency_controls":["stable character design proportions","no facial deformation","uniform shading style across all elements","maintained color palette consistency","preserved clean ''everyday'' vibe of protagonist against grim setting"]}}'

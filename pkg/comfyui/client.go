@@ -24,6 +24,9 @@ type Params struct {
 	Steps  int // 默认 25
 	CFG    float64
 	Seed   int64
+	// 可选：百度翻译 API（工作流含 BaiduTranslateNode 时使用，为空则不走翻译）
+	BaiduTranslateAppID  string
+	BaiduTranslateAppKey string
 }
 
 // Generate 提交工作流并等待完成，返回生成图片的完整 URL（BaseURL + /view?filename=...）
@@ -44,7 +47,7 @@ func (c *Client) Generate(p *Params) (imageURL string, err error) {
 		p.Seed = time.Now().UnixNano() % 100000000000000
 	}
 
-	workflow := c.buildWorkflow(p.Prompt, p.Width, p.Height, p.Steps, p.CFG, p.Seed)
+	workflow := c.buildWorkflow(p.Prompt, p.Width, p.Height, p.Steps, p.CFG, p.Seed, p.BaiduTranslateAppID, p.BaiduTranslateAppKey)
 	baseURL := c.BaseURL
 	if baseURL == "" {
 		return "", fmt.Errorf("comfyui base_url is required")
@@ -127,8 +130,23 @@ func (c *Client) Generate(p *Params) (imageURL string, err error) {
 	return "", fmt.Errorf("comfyui timeout waiting for result")
 }
 
-// buildWorkflow 与 file1.html 中 Flux 工作流一致
-func (c *Client) buildWorkflow(prompt string, width, height, steps int, cfg float64, seed int64) map[string]interface{} {
+// buildWorkflow 与 flux.json 一致：含 BaiduTranslateNode(24) -> CLIPTextEncode(21)，其余为 Flux 文生图
+func (c *Client) buildWorkflow(prompt string, width, height, steps int, cfg float64, seed int64, baiduAppID, baiduAppKey string) map[string]interface{} {
+	// 节点 24：BaiduTranslateNode，输入为 prompt（中译英等），输出给 21
+	inputs24 := map[string]interface{}{
+		"from_translate": "auto",
+		"to_translate":   "en",
+		"text":           prompt,
+	}
+	if baiduAppID != "" && baiduAppKey != "" {
+		inputs24["baidu_appid"] = baiduAppID
+		inputs24["baidu_appkey"] = baiduAppKey
+	}
+	node24 := map[string]interface{}{
+		"inputs":     inputs24,
+		"class_type": "BaiduTranslateNode",
+	}
+
 	return map[string]interface{}{
 		"4": map[string]interface{}{
 			"inputs":     map[string]interface{}{"conditioning": []interface{}{"21", 0}},
@@ -172,8 +190,9 @@ func (c *Client) buildWorkflow(prompt string, width, height, steps int, cfg floa
 			"class_type": "EmptyLatentImage",
 		},
 		"21": map[string]interface{}{
-			"inputs":     map[string]interface{}{"text": prompt, "clip": []interface{}{"18", 0}},
+			"inputs":     map[string]interface{}{"text": []interface{}{"24", 0}, "clip": []interface{}{"18", 0}},
 			"class_type": "CLIPTextEncode",
 		},
+		"24": node24,
 	}
 }
