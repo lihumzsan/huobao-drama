@@ -3,8 +3,11 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	models "github.com/drama-generator/backend/domain/models"
+	"github.com/drama-generator/backend/pkg/comfyui"
+	"github.com/drama-generator/backend/pkg/config"
 	"github.com/drama-generator/backend/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -13,13 +16,15 @@ type StoryboardCompositionService struct {
 	db       *gorm.DB
 	log      *logger.Logger
 	imageGen *ImageGenerationService
+	config   *config.Config
 }
 
-func NewStoryboardCompositionService(db *gorm.DB, log *logger.Logger, imageGen *ImageGenerationService) *StoryboardCompositionService {
+func NewStoryboardCompositionService(db *gorm.DB, log *logger.Logger, imageGen *ImageGenerationService, cfg *config.Config) *StoryboardCompositionService {
 	return &StoryboardCompositionService{
 		db:       db,
 		log:      log,
 		imageGen: imageGen,
+		config:   cfg,
 	}
 }
 
@@ -348,9 +353,11 @@ func (s *StoryboardCompositionService) UpdateScene(sceneID string, req *UpdateSc
 }
 
 type GenerateSceneImageRequest struct {
-	SceneID uint   `json:"scene_id"`
-	Prompt  string `json:"prompt"`
-	Model   string `json:"model"`
+	SceneID        uint   `json:"scene_id"`
+	Prompt         string `json:"prompt"`
+	Model          string `json:"model"`
+	UseComfyUI     bool   `json:"use_comfyui"`      // 使用 ComfyUI 工作流生成场景图
+	ComfyUIBaseURL string `json:"comfyui_base_url"` // 为空时使用 config.comfyui.base_url
 }
 
 func (s *StoryboardCompositionService) GenerateSceneImage(req *GenerateSceneImageRequest) (*models.ImageGeneration, error) {
@@ -379,7 +386,35 @@ func (s *StoryboardCompositionService) GenerateSceneImage(req *GenerateSceneImag
 		s.log.Infow("Using scene prompt", "scene_id", req.SceneID, "prompt", prompt)
 	}
 
-	// 使用imageGen服务直接生成
+	// 使用 ComfyUI 工作流生成（与 file1.html 一致）
+	if req.UseComfyUI && s.imageGen != nil {
+		baseURL := strings.TrimSpace(req.ComfyUIBaseURL)
+		if baseURL == "" && s.config != nil {
+			baseURL = strings.TrimSpace(s.config.ComfyUI.BaseURL)
+		}
+		if baseURL == "" {
+			return nil, fmt.Errorf("ComfyUI 未配置：请在设置中填写 ComfyUI 服务器地址，或 config 中配置 comfyui.base_url")
+		}
+		client := &comfyui.Client{BaseURL: baseURL, HTTP: nil}
+		imageURL, err := client.Generate(&comfyui.Params{
+			Prompt: prompt,
+			Width:  1080,
+			Height: 1920,
+			Steps:  25,
+			CFG:    1,
+			Seed:   0,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ComfyUI 生成失败: %w", err)
+		}
+		imageGen, err := s.imageGen.CreateImageFromURL(req.SceneID, scene.DramaID, prompt, imageURL)
+		if err != nil {
+			return nil, err
+		}
+		return imageGen, nil
+	}
+
+	// 使用 imageGen 服务（平台 AI）直接生成
 	if s.imageGen != nil {
 		genReq := &GenerateImageRequest{
 			SceneID:   &req.SceneID,

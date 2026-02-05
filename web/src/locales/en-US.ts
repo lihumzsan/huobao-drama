@@ -391,6 +391,8 @@ export default {
     sceneImages: 'Scene Images',
     characterCount: '{count} characters need to generate images',
     sceneCount: '{count} scenes need to generate images',
+    useComfyUI: 'Use ComfyUI',
+    comfyuiBaseURLPlaceholder: 'ComfyUI server URL, e.g. http://127.0.0.1:8188',
     selectAll: 'Select All',
     batchGenerate: 'Batch Generate',
     modelConfig: 'AI Model Configuration',

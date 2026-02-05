@@ -318,8 +318,8 @@ const providerConfigs: Record<AIServiceType, ProviderConfig[]> = {
   text: [
     {
       id: "openai",
-      name: "OpenAI",
-      models: ["gpt-5.2", "gemini-3-flash-preview"],
+      name: "OpenAI / 兼容接口",
+      models: ["gpt-5.2", "gpt-5.1", "gemini-3-flash-preview"],
     },
     {
       id: "chatfire",

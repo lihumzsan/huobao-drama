@@ -47,7 +47,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, log *logger.Logger, localStora
 		log.Fatalw("Failed to create upload handler", "error", err)
 	}
 	storyboardHandler := handlers2.NewStoryboardHandler(db, cfg, log)
-	sceneHandler := handlers2.NewSceneHandler(db, log, imageGenService)
+	sceneHandler := handlers2.NewSceneHandler(db, cfg, log, imageGenService)
 	taskHandler := handlers2.NewTaskHandler(db, log)
 	framePromptService := services2.NewFramePromptService(db, cfg, log)
 	framePromptHandler := handlers2.NewFramePromptHandler(framePromptService, log)

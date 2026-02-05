@@ -371,6 +371,8 @@ export default {
     sceneImages: '场景图片',
     characterCount: '共 {count} 个角色需要生成图片',
     sceneCount: '共 {count} 个场景需要生成图片',
+    useComfyUI: '使用 ComfyUI 生成',
+    comfyuiBaseURLPlaceholder: 'ComfyUI 服务器地址，如 http://127.0.0.1:8188',
     selectAll: '全选',
     batchGenerate: '批量生成',
     modelConfig: 'AI模型配置',

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	services2 "github.com/drama-generator/backend/application/services"
+	"github.com/drama-generator/backend/pkg/config"
 	"github.com/drama-generator/backend/pkg/logger"
 	"github.com/drama-generator/backend/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -13,9 +14,9 @@ type SceneHandler struct {
 	log          *logger.Logger
 }
 
-func NewSceneHandler(db *gorm.DB, log *logger.Logger, imageGenService *services2.ImageGenerationService) *SceneHandler {
+func NewSceneHandler(db *gorm.DB, cfg *config.Config, log *logger.Logger, imageGenService *services2.ImageGenerationService) *SceneHandler {
 	return &SceneHandler{
-		sceneService: services2.NewStoryboardCompositionService(db, log, imageGenService),
+		sceneService: services2.NewStoryboardCompositionService(db, log, imageGenService, cfg),
 		log:          log,
 	}
 }

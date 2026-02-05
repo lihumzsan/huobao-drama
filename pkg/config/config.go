@@ -12,7 +12,13 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	Storage  StorageConfig  `mapstructure:"storage"`
 	AI       AIConfig       `mapstructure:"ai"`
+	ComfyUI  ComfyUIConfig  `mapstructure:"comfyui"`
 	Style    StyleConfig    `mapstructure:"style"`
+}
+
+// ComfyUIConfig 场景图使用 ComfyUI 文生图时的默认配置
+type ComfyUIConfig struct {
+	BaseURL string `mapstructure:"base_url"` // 例如 http://127.0.0.1:8188
 }
 
 type AppConfig struct {

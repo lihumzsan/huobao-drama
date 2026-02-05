@@ -228,8 +228,8 @@ const providerConfigs: Record<AIServiceType, ProviderConfig[]> = {
   text: [
     {
       id: "openai",
-      name: "OpenAI",
-      models: ["gpt-5.2", "gemini-3-flash-preview"],
+      name: "OpenAI / 兼容接口",
+      models: ["gpt-5.2", "gpt-5.1", "gemini-3-flash-preview"],
     },
     {
       id: "chatfire",
@@ -294,26 +294,15 @@ const providerConfigs: Record<AIServiceType, ProviderConfig[]> = {
   ],
 };
 
-// 当前可用的厂商列表（只显示有激活配置的）
+// 当前可用的厂商列表：始终显示当前服务类型下的全部厂商，便于添加第一条配置或新增其他厂商
 const availableProviders = computed(() => {
-  // 获取当前service_type下所有激活的配置
-  const activeConfigs = configs.value.filter(
-    (c) => c.service_type === form.service_type && c.is_active,
-  );
-
-  // 提取所有激活配置的provider，去重
-  const activeProviderIds = new Set(activeConfigs.map((c) => c.provider));
-
-  // 从providerConfigs中筛选出有激活配置的provider
-  const allProviders = providerConfigs[form.service_type] || [];
-  return allProviders.filter((p) => activeProviderIds.has(p.id));
+  return providerConfigs[form.service_type] || [];
 });
 
-// 当前可用的模型列表（从已激活的配置中获取）
+// 当前可用的模型列表：优先从已激活配置取，若无则用预设的 providerConfigs 模型列表（便于新增第一条配置）
 const availableModels = computed(() => {
   if (!form.provider) return [];
 
-  // 从已激活的配置中提取该 provider 的所有模型
   const activeConfigsForProvider = configs.value.filter(
     (c) =>
       c.provider === form.provider &&
@@ -321,11 +310,20 @@ const availableModels = computed(() => {
       c.is_active,
   );
 
-  // 提取所有模型，去重
   const models = new Set<string>();
   activeConfigsForProvider.forEach((config) => {
-    config.model.forEach((m) => models.add(m));
+    (Array.isArray(config.model) ? config.model : [config.model]).forEach(
+      (m: string) => models.add(m),
+    );
   });
+
+  // 若无已有配置，使用预设的厂商模型列表，确保添加新配置时能看到 gpt-5.1 等选项
+  if (models.size === 0) {
+    const preset = providerConfigs[form.service_type]?.find(
+      (p) => p.id === form.provider,
+    );
+    if (preset?.models) preset.models.forEach((m) => models.add(m));
+  }
 
   return Array.from(models);
 });

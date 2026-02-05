@@ -701,6 +701,53 @@ func (s *ImageGenerationService) GenerateImagesForScene(sceneID string) ([]*mode
 	return []*models.ImageGeneration{imageGen}, nil
 }
 
+// CreateImageFromURL 用于 ComfyUI 等外部生成结果：创建记录、下载到本地、更新场景
+func (s *ImageGenerationService) CreateImageFromURL(sceneID uint, dramaID uint, prompt string, imageURL string) (*models.ImageGeneration, error) {
+	if imageURL == "" {
+		return nil, fmt.Errorf("image URL is required")
+	}
+	dramaIDStr := fmt.Sprintf("%d", dramaID)
+	imageGen := &models.ImageGeneration{
+		DramaID:   dramaID,
+		SceneID:   &sceneID,
+		ImageType: string(models.ImageTypeScene),
+		Provider:  "comfyui",
+		Prompt:    prompt,
+		Status:    models.ImageStatusCompleted,
+	}
+	imageGen.ImageURL = &imageURL
+	if err := s.db.Create(imageGen).Error; err != nil {
+		return nil, err
+	}
+
+	var localPath *string
+	if s.localStorage != nil && (strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://")) {
+		downloadResult, err := s.localStorage.DownloadFromURLWithPath(imageURL, "images")
+		if err != nil {
+			s.log.Warnw("Failed to download ComfyUI image to local", "error", err.Error(), "id", imageGen.ID)
+		} else {
+			localPath = &downloadResult.RelativePath
+			s.db.Model(imageGen).Updates(map[string]interface{}{
+				"local_path":   localPath,
+				"completed_at": time.Now(),
+			})
+		}
+	}
+
+	sceneUpdates := map[string]interface{}{
+		"status":    "generated",
+		"image_url": imageURL,
+	}
+	if localPath != nil {
+		sceneUpdates["local_path"] = localPath
+	}
+	if err := s.db.Model(&models.Scene{}).Where("id = ?", sceneID).Updates(sceneUpdates).Error; err != nil {
+		s.log.Errorw("Failed to update scene after ComfyUI image", "error", err, "scene_id", sceneID)
+	}
+	s.log.Infow("Scene image from ComfyUI created", "scene_id", sceneID, "image_gen_id", imageGen.ID, "drama_id", dramaIDStr)
+	return imageGen, nil
+}
+
 // BackgroundInfo 背景信息结构
 type BackgroundInfo struct {
 	Location          string `json:"location"`

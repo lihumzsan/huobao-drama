@@ -360,6 +360,38 @@ docker run -d --name huobao-drama -p 5678:5678 -v $(pwd)/data:/app/data huobao-d
    - Provider: `openai`
    - Model: `qwen2.5:latest`
 
+3. **自定义 API（OpenAI 兼容接口）**
+
+   若使用自己的推理服务（如 Variflight、其他兼容 OpenAI `/v1/chat/completions` 的网关），需在 **设置 → AI 服务配置** 中新增一条 **文本生成** 配置，否则「提取角色和场景」等会报错「no active config found」。
+
+   **界面操作：**
+   - 进入 **设置** → **AI 服务配置** → 标签 **文本生成**
+   - 点击 **添加配置**
+   - 名称：随意（如「Variflight」）
+   - 厂商：**OpenAI / 兼容接口**
+   - 模型：选或输入你的模型名（如 `gpt-5.1`）
+   - **Base URL**：填到 `v1` 为止，例如 `https://aigw.variflight.com/v1`（不要带 `/chat/completions`）
+   - **API Key**：你的 Bearer Token（如 `sk-xxx`）
+   - 保存后确保该配置为 **已启用**，再重试「提取角色和场景」
+
+   **或通过 API 添加（后端需已启动）：**
+
+   ```bash
+   curl -X POST 'http://localhost:5678/api/v1/ai-configs' \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "service_type": "text",
+       "provider": "openai",
+       "name": "Variflight",
+       "base_url": "https://aigw.variflight.com/v1",
+       "api_key": "sk-你的Token",
+       "model": ["gpt-5.1"],
+       "priority": 10
+     }'
+   ```
+
+   将 `sk-你的Token` 替换为你的实际 API Key。添加成功后，再在界面中确认该配置已启用。
+
 ---
 
 ### 🏭 传统部署方式

@@ -250,7 +250,7 @@
               </div>
             </div>
 
-            <div class="character-image-list">
+            <el-checkbox-group v-model="selectedCharacterIds" class="character-image-list">
               <div
                 v-for="char in currentEpisode?.characters"
                 :key="char.id"
@@ -259,8 +259,7 @@
                 <el-card shadow="hover" class="fixed-card">
                   <div class="card-header">
                     <el-checkbox
-                      v-model="selectedCharacterIds"
-                      :value="char.id"
+                      :label="char.id"
                       style="margin-right: 8px"
                     />
                     <div class="header-left">
@@ -383,7 +382,7 @@
                   </div>
                 </el-card>
               </div>
-            </div>
+            </el-checkbox-group>
           </div>
 
           <el-divider />
@@ -405,13 +404,19 @@
                 </el-alert>
               </div>
               <div class="section-actions">
-                <!-- <el-button
-                  :icon="Document"
-                  @click="openExtractSceneDialog"
-                  size="default"
+                <el-checkbox
+                  v-model="useComfyUIForScene"
+                  style="margin-right: 8px"
                 >
-                  {{ $t("workflow.extractFromScript") }}
-                </el-button> -->
+                  {{ $t("workflow.useComfyUI") || "使用 ComfyUI 生成" }}
+                </el-checkbox>
+                <el-input
+                  v-if="useComfyUIForScene"
+                  v-model="comfyuiBaseURL"
+                  :placeholder="$t('workflow.comfyuiBaseURLPlaceholder') || 'http://127.0.0.1:8188'"
+                  clearable
+                  style="width: 220px; margin-right: 12px"
+                />
                 <el-checkbox
                   v-model="selectAllScenes"
                   @change="toggleSelectAllScenes"
@@ -441,7 +446,7 @@
               </div>
             </div>
 
-            <div class="scene-image-list">
+            <el-checkbox-group v-model="selectedSceneIds" class="scene-image-list">
               <div
                 v-for="scene in currentEpisode?.scenes"
                 :key="scene.id"
@@ -450,8 +455,7 @@
                 <el-card shadow="hover" class="fixed-card">
                   <div class="card-header">
                     <el-checkbox
-                      v-model="selectedSceneIds"
-                      :value="scene.id"
+                      :label="scene.id"
                       style="margin-right: 8px"
                     />
                     <div class="header-left">
@@ -545,7 +549,7 @@
                   </div>
                 </el-card>
               </div>
-            </div>
+            </el-checkbox-group>
           </div>
 
           <el-divider />
@@ -1302,6 +1306,8 @@ const textModels = ref<ModelOption[]>([]);
 const imageModels = ref<ModelOption[]>([]);
 const selectedTextModel = ref<string>("");
 const selectedImageModel = ref<string>("");
+const useComfyUIForScene = ref(false);
+const comfyuiBaseURL = ref("");
 
 const hasScript = computed(() => {
   const currentEp = currentEpisode.value;
@@ -1922,6 +1928,8 @@ const generateSceneImage = async (sceneId: string) => {
     const response = await dramaAPI.generateSceneImage({
       scene_id: parseInt(sceneId),
       model,
+      use_comfyui: useComfyUIForScene.value,
+      comfyui_base_url: comfyuiBaseURL.value || undefined,
     });
     const imageGenId = response.image_generation?.id;
 
