@@ -16,12 +16,14 @@ type Config struct {
 	Style    StyleConfig    `mapstructure:"style"`
 }
 
-// ComfyUIConfig 场景图使用 ComfyUI 文生图时的默认配置
+// ComfyUIConfig 场景图/镜头图/图生视频使用 ComfyUI 时的默认配置
 type ComfyUIConfig struct {
 	BaseURL string `mapstructure:"base_url"` // 例如 http://127.0.0.1:8188
 	// 工作流含 BaiduTranslateNode 时可选填写
 	BaiduTranslateAppID  string `mapstructure:"baidu_translate_app_id"`
 	BaiduTranslateAppKey string `mapstructure:"baidu_translate_app_key"`
+	// 图生视频时首帧图片如何提供给 ComfyUI：留空则尝试 POST /upload/image；若 ComfyUI 无上传接口可填本地路径，如 /path/to/ComfyUI/input
+	InputDir string `mapstructure:"input_dir"`
 }
 
 type AppConfig struct {

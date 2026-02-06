@@ -398,8 +398,8 @@ func (s *StoryboardCompositionService) GenerateSceneImage(req *GenerateSceneImag
 		client := &comfyui.Client{BaseURL: baseURL, HTTP: nil}
 		params := &comfyui.Params{
 			Prompt: prompt,
-			Width:  1080,
-			Height: 1920,
+			Width:  1920,
+			Height: 1080,
 			Steps:  25,
 			CFG:    1,
 			Seed:   0,

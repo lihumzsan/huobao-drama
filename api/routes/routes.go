@@ -37,7 +37,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, log *logger.Logger, localStora
 	scriptGenHandler := handlers2.NewScriptGenerationHandler(db, cfg, log)
 	imageGenService := services2.NewImageGenerationService(db, cfg, transferService, localStoragePtr, log)
 	imageGenHandler := handlers2.NewImageGenerationHandler(db, cfg, log, transferService, localStoragePtr)
-	videoGenHandler := handlers2.NewVideoGenerationHandler(db, transferService, localStoragePtr, aiService, log)
+	videoGenHandler := handlers2.NewVideoGenerationHandler(db, cfg, transferService, localStoragePtr, aiService, log)
 	videoMergeHandler := handlers2.NewVideoMergeHandler(db, nil, cfg.Storage.LocalPath, cfg.Storage.BaseURL, log)
 	assetHandler := handlers2.NewAssetHandler(db, cfg, log)
 	characterLibraryService := services2.NewCharacterLibraryService(db, log, cfg)
@@ -173,6 +173,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, log *logger.Logger, localStora
 		videos := api.Group("/videos")
 		{
 			videos.GET("", videoGenHandler.ListVideoGenerations)
+			videos.GET("/comfyui-available", videoGenHandler.ComfyUIAvailable)
 			videos.POST("", videoGenHandler.GenerateVideo)
 			videos.GET("/:id", videoGenHandler.GetVideoGeneration)
 			videos.DELETE("/:id", videoGenHandler.DeleteVideoGeneration)

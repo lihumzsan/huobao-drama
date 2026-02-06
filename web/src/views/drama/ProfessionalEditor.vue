@@ -535,6 +535,15 @@
                       :key="img.id"
                       class="image-item"
                     >
+                      <el-button
+                        class="image-item-delete"
+                        :icon="Delete"
+                        type="danger"
+                        size="small"
+                        circle
+                        @click.stop="deleteFrameImage(img)"
+                        title="删除"
+                      />
                       <el-image
                         v-if="hasImage(img)"
                         :src="getImageUrl(img)"
@@ -2307,6 +2316,9 @@ const extractProviderFromModel = (modelName: string): string => {
   if (modelName.startsWith("kling")) {
     return "kling";
   }
+  if (modelName === "comfyui") {
+    return "comfyui";
+  }
 
   // 默认返回doubao
   return "doubao";
@@ -2366,6 +2378,25 @@ const loadVideoModels = async () => {
         };
       },
     );
+
+    // ComfyUI 图生视频（仅单首帧）：与文生图共用配置，无 video 类型 AI 配置时也可用
+    try {
+      const res = await videoAPI.comfyuiAvailable();
+      if (res?.available) {
+        videoModelCapabilities.value = [
+          ...videoModelCapabilities.value,
+          {
+            id: "comfyui",
+            name: "ComfyUI 图生视频 (单首帧)",
+            supportSingleImage: true,
+            supportMultipleImages: false,
+            supportFirstLastFrame: false,
+            supportTextOnly: false,
+            maxImages: 1,
+          },
+        ];
+      }
+    } catch (_) {}
   } catch (error: any) {
     console.error("加载视频模型配置失败:", error);
     ElMessage.error("加载视频模型失败");
@@ -2644,11 +2675,15 @@ watch(currentFramePrompt, (newPrompt) => {
   }
 });
 
-// 监听视频模型切换，清空已选图片和参考图模式
-watch(selectedVideoModel, () => {
+// 监听视频模型切换，清空已选图片；ComfyUI 仅支持单首帧，强制为单图模式
+watch(selectedVideoModel, (newModel) => {
   selectedImagesForVideo.value = [];
   selectedLastImageForVideo.value = null;
-  selectedReferenceMode.value = "";
+  if (newModel === "comfyui") {
+    selectedReferenceMode.value = "single";
+  } else {
+    selectedReferenceMode.value = "";
+  }
 });
 
 // 监听镜头切换，自动更新视频时长
@@ -3154,6 +3189,30 @@ const getFrameTypeText = (frameType?: string) => {
     action: "动作序列",
   };
   return frameTypeMap[frameType] || frameType;
+};
+
+// 删除镜头图片生成记录（含失败记录）
+const deleteFrameImage = async (img: ImageGeneration) => {
+  const isFailed = img.status === "failed";
+  const msg = isFailed
+    ? "确定删除这条失败记录？"
+    : "确定删除该图片记录？删除后不可恢复。";
+  try {
+    await ElMessageBox.confirm(msg, "删除", {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+  } catch {
+    return;
+  }
+  try {
+    await imageAPI.deleteImage(img.id);
+    generatedImages.value = generatedImages.value.filter((i) => i.id !== img.id);
+    ElMessage.success("已删除");
+  } catch (error: any) {
+    ElMessage.error("删除失败: " + (error.message || "未知错误"));
+  }
 };
 
 // 获取分镜缩略图
@@ -5119,6 +5178,17 @@ onBeforeUnmount(() => {
         transition: all 0.2s ease;
         cursor: pointer;
         box-shadow: var(--shadow-sm);
+
+        .image-item-delete {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          z-index: 2;
+          opacity: 0.85;
+          &:hover {
+            opacity: 1;
+          }
+        }
 
         &:hover {
           transform: translateY(-2px);

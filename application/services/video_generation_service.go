@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,8 @@ import (
 	models "github.com/drama-generator/backend/domain/models"
 	"github.com/drama-generator/backend/infrastructure/external/ffmpeg"
 	"github.com/drama-generator/backend/infrastructure/storage"
+	"github.com/drama-generator/backend/pkg/comfyui"
+	"github.com/drama-generator/backend/pkg/config"
 	"github.com/drama-generator/backend/pkg/logger"
 	"github.com/drama-generator/backend/pkg/utils"
 	"github.com/drama-generator/backend/pkg/video"
@@ -23,14 +26,16 @@ type VideoGenerationService struct {
 	localStorage    *storage.LocalStorage
 	aiService       *AIService
 	ffmpeg          *ffmpeg.FFmpeg
+	config          *config.Config
 }
 
-func NewVideoGenerationService(db *gorm.DB, transferService *ResourceTransferService, localStorage *storage.LocalStorage, aiService *AIService, log *logger.Logger) *VideoGenerationService {
+func NewVideoGenerationService(db *gorm.DB, transferService *ResourceTransferService, localStorage *storage.LocalStorage, aiService *AIService, cfg *config.Config, log *logger.Logger) *VideoGenerationService {
 	service := &VideoGenerationService{
 		db:              db,
 		localStorage:    localStorage,
 		transferService: transferService,
 		aiService:       aiService,
+		config:          cfg,
 		log:             log,
 		ffmpeg:          ffmpeg.NewFFmpeg(log),
 	}
@@ -49,13 +54,13 @@ type GenerateVideoRequest struct {
 	ReferenceMode string `json:"reference_mode"`
 
 	// 单图模式
-	ImageURL      string  `json:"image_url"`
+	ImageURL       string  `json:"image_url"`
 	ImageLocalPath *string `json:"image_local_path"` // 单图模式的本地路径
 
 	// 首尾帧模式
-	FirstFrameURL      *string `json:"first_frame_url"`
+	FirstFrameURL       *string `json:"first_frame_url"`
 	FirstFrameLocalPath *string `json:"first_frame_local_path"` // 首帧本地路径
-	LastFrameURL       *string `json:"last_frame_url"`
+	LastFrameURL        *string `json:"last_frame_url"`
 	LastFrameLocalPath  *string `json:"last_frame_local_path"` // 尾帧本地路径
 
 	// 多图模式
@@ -94,6 +99,14 @@ func (s *VideoGenerationService) GenerateVideo(request *GenerateVideoRequest) (*
 	provider := request.Provider
 	if provider == "" {
 		provider = "doubao"
+	}
+	if provider == "comfyui" {
+		if request.ReferenceMode != "single" {
+			return nil, fmt.Errorf("ComfyUI 图生视频仅支持「单首帧」模式，请选择单图参考")
+		}
+		if (request.ImageLocalPath == nil || *request.ImageLocalPath == "") && request.ImageURL == "" {
+			return nil, fmt.Errorf("ComfyUI 图生视频需要一张首帧图片，请先生成镜头图片并选择")
+		}
 	}
 
 	dramaID, _ := strconv.ParseUint(request.DramaID, 10, 32)
@@ -193,6 +206,12 @@ func (s *VideoGenerationService) ProcessVideoGeneration(videoGenID uint) {
 	}
 
 	s.db.Model(&videoGen).Update("status", models.VideoStatusProcessing)
+
+	// ComfyUI 图生视频（仅单首帧，与 imgToVideo.json 一致）
+	if videoGen.Provider == "comfyui" && s.config != nil && strings.TrimSpace(s.config.ComfyUI.BaseURL) != "" {
+		s.runComfyUIVideoGeneration(videoGenID, &videoGen)
+		return
+	}
 
 	client, err := s.getVideoClient(videoGen.Provider, videoGen.Model)
 	if err != nil {
@@ -521,6 +540,55 @@ func (s *VideoGenerationService) updateVideoGenError(videoGenID uint, errorMsg s
 	}
 }
 
+// runComfyUIVideoGeneration 使用 ComfyUI 单图生视频工作流（imgToVideo.json），仅适用于单首帧
+func (s *VideoGenerationService) runComfyUIVideoGeneration(videoGenID uint, videoGen *models.VideoGeneration) {
+	baseURL := strings.TrimSpace(s.config.ComfyUI.BaseURL)
+	if baseURL == "" {
+		s.updateVideoGenError(videoGenID, "ComfyUI 未配置 base_url")
+		return
+	}
+	if videoGen.ImageURL == nil || *videoGen.ImageURL == "" {
+		s.updateVideoGenError(videoGenID, "ComfyUI 图生视频需要首帧图片")
+		return
+	}
+	imageRef := *videoGen.ImageURL
+	var localPath string
+	if strings.HasPrefix(imageRef, "http://") || strings.HasPrefix(imageRef, "https://") {
+		if s.localStorage == nil {
+			s.updateVideoGenError(videoGenID, "无法下载首帧图：未配置本地存储")
+			return
+		}
+		result, err := s.localStorage.DownloadFromURLWithPath(imageRef, "video_frames")
+		if err != nil {
+			s.updateVideoGenError(videoGenID, "下载首帧图失败: "+err.Error())
+			return
+		}
+		localPath = result.AbsolutePath
+	} else {
+		if s.localStorage == nil {
+			s.updateVideoGenError(videoGenID, "无法解析首帧图路径：未配置本地存储")
+			return
+		}
+		localPath = s.localStorage.GetAbsolutePath(imageRef)
+		if _, err := os.Stat(localPath); err != nil {
+			s.updateVideoGenError(videoGenID, "首帧图文件不存在: "+localPath)
+			return
+		}
+	}
+	vc := &comfyui.VideoClient{
+		BaseURL:  baseURL,
+		InputDir: strings.TrimSpace(s.config.ComfyUI.InputDir),
+		HTTP:     nil,
+	}
+	videoURL, err := vc.ImageToVideo(localPath, videoGen.Prompt)
+	if err != nil {
+		s.log.Errorw("ComfyUI video generation failed", "id", videoGenID, "error", err)
+		s.updateVideoGenError(videoGenID, "ComfyUI 图生视频失败: "+err.Error())
+		return
+	}
+	s.completeVideoGeneration(videoGenID, videoURL, nil, nil, nil, nil)
+}
+
 func (s *VideoGenerationService) getVideoClient(provider string, modelName string) (video.VideoClient, error) {
 	// 根据模型名称获取AI配置
 	var config *models.AIServiceConfig
@@ -719,7 +787,7 @@ func (s *VideoGenerationService) convertImageToBase64(imageURL string) (string, 
 	// 尝试从本地存储读取
 	if s.localStorage != nil {
 		var relativePath string
-		
+
 		// 1. 检查是否是本地URL（包含 /static/）
 		if strings.Contains(imageURL, "/static/") {
 			// 提取相对路径，例如从 "http://localhost:5678/static/images/xxx.jpg" 提取 "images/xxx.jpg"
@@ -731,11 +799,11 @@ func (s *VideoGenerationService) convertImageToBase64(imageURL string) (string, 
 			// 2. 如果不是 HTTP/HTTPS URL，视为相对路径（如 "images/xxx.jpg"）
 			relativePath = imageURL
 		}
-		
+
 		// 如果识别出相对路径，尝试读取本地文件
 		if relativePath != "" {
 			absPath := s.localStorage.GetAbsolutePath(relativePath)
-			
+
 			// 使用工具函数转换为base64
 			base64Str, err := utils.ImageToBase64(absPath)
 			if err == nil {

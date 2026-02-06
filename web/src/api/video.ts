@@ -6,6 +6,10 @@ import type {
 import request from '../utils/request'
 
 export const videoAPI = {
+  comfyuiAvailable() {
+    return request.get<{ available: boolean }>('/videos/comfyui-available')
+  },
+
   generateVideo(data: GenerateVideoRequest) {
     return request.post<VideoGeneration>('/videos', data)
   },

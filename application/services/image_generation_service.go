@@ -13,6 +13,7 @@ import (
 	models "github.com/drama-generator/backend/domain/models"
 	"github.com/drama-generator/backend/infrastructure/storage"
 	"github.com/drama-generator/backend/pkg/ai"
+	"github.com/drama-generator/backend/pkg/comfyui"
 	"github.com/drama-generator/backend/pkg/config"
 	"github.com/drama-generator/backend/pkg/image"
 	"github.com/drama-generator/backend/pkg/logger"
@@ -102,6 +103,13 @@ func (s *ImageGenerationService) GenerateImage(request *GenerateImageRequest) (*
 	if provider == "" {
 		provider = "openai"
 	}
+	// 若无图生配置但已配置 ComfyUI，则镜头/分镜图走 ComfyUI
+	if (provider == "openai" || provider == "") && s.config != nil && strings.TrimSpace(s.config.ComfyUI.BaseURL) != "" {
+		if _, err := s.aiService.GetDefaultConfig("image"); err != nil {
+			provider = "comfyui"
+			s.log.Infow("No image AI config, using ComfyUI for image generation", "drama_id", request.DramaID)
+		}
+	}
 
 	// 序列化参考图片
 	var referenceImagesJSON []byte
@@ -165,7 +173,7 @@ func (s *ImageGenerationService) ProcessImageGeneration(imageGenID uint) {
 
 	s.db.Model(&imageGen).Update("status", models.ImageStatusProcessing)
 
-	// 如果关联了background，同步更新background为generating状态
+	// 如果关联了 background，同步更新 background 为 generating 状态
 	if imageGen.StoryboardID != nil {
 		if err := s.db.Model(&models.Scene{}).Where("id = ?", *imageGen.StoryboardID).Update("status", "generating").Error; err != nil {
 			s.log.Warnw("Failed to update background status to generating", "scene_id", *imageGen.StoryboardID, "error", err)
@@ -174,8 +182,21 @@ func (s *ImageGenerationService) ProcessImageGeneration(imageGenID uint) {
 		}
 	}
 
+	// 镜头/分镜图使用 ComfyUI（与 flux.json 一致，1920×1080）
+	if imageGen.Provider == "comfyui" && s.config != nil && strings.TrimSpace(s.config.ComfyUI.BaseURL) != "" {
+		s.runComfyUIGeneration(imageGenID, &imageGen)
+		return
+	}
+
 	client, err := s.getImageClientWithModel(imageGen.Provider, imageGen.Model)
 	if err != nil {
+		// 无图生配置时，若已配置 ComfyUI 且为分镜/镜头图，则回退到 ComfyUI
+		if s.config != nil && strings.TrimSpace(s.config.ComfyUI.BaseURL) != "" &&
+			(imageGen.StoryboardID != nil || imageGen.ImageType == string(models.ImageTypeStoryboard)) {
+			s.log.Infow("Falling back to ComfyUI for storyboard image", "id", imageGenID)
+			s.runComfyUIGeneration(imageGenID, &imageGen)
+			return
+		}
 		s.log.Errorw("Failed to get image client", "error", err, "provider", imageGen.Provider, "model", imageGen.Model)
 		s.updateImageGenError(imageGenID, err.Error())
 		return
@@ -454,6 +475,40 @@ func (s *ImageGenerationService) updateImageGenError(imageGenID uint, errorMsg s
 		s.db.Model(&models.Scene{}).Where("id = ?", *imageGen.SceneID).Update("status", "failed")
 		s.log.Warnw("Scene marked as failed", "scene_id", *imageGen.SceneID)
 	}
+}
+
+// runComfyUIGeneration 使用 ComfyUI 工作流生成图片（与 flux.json 一致，1920×1080），用于镜头/分镜图
+func (s *ImageGenerationService) runComfyUIGeneration(imageGenID uint, imageGen *models.ImageGeneration) {
+	baseURL := strings.TrimSpace(s.config.ComfyUI.BaseURL)
+	if baseURL == "" {
+		s.updateImageGenError(imageGenID, "ComfyUI 未配置 base_url")
+		return
+	}
+	params := &comfyui.Params{
+		Prompt: imageGen.Prompt,
+		Width:  1920,
+		Height: 1080,
+		Steps:  25,
+		CFG:    1,
+		Seed:   0,
+	}
+	if s.config.ComfyUI.BaiduTranslateAppID != "" && s.config.ComfyUI.BaiduTranslateAppKey != "" {
+		params.BaiduTranslateAppID = s.config.ComfyUI.BaiduTranslateAppID
+		params.BaiduTranslateAppKey = s.config.ComfyUI.BaiduTranslateAppKey
+	}
+	client := &comfyui.Client{BaseURL: baseURL, HTTP: nil}
+	imageURL, err := client.Generate(params)
+	if err != nil {
+		s.log.Errorw("ComfyUI generation failed", "id", imageGenID, "error", err)
+		s.updateImageGenError(imageGenID, "ComfyUI 生成失败: "+err.Error())
+		return
+	}
+	s.completeImageGeneration(imageGenID, &image.ImageResult{
+		ImageURL:  imageURL,
+		Completed: true,
+		Width:     1920,
+		Height:    1080,
+	})
 }
 
 func (s *ImageGenerationService) getImageClient(provider string) (image.ImageClient, error) {

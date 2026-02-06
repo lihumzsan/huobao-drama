@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/drama-generator/backend/application/services"
 	"github.com/drama-generator/backend/infrastructure/storage"
+	"github.com/drama-generator/backend/pkg/config"
 	"github.com/drama-generator/backend/pkg/logger"
 	"github.com/drama-generator/backend/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -13,14 +15,22 @@ import (
 
 type VideoGenerationHandler struct {
 	videoService *services.VideoGenerationService
+	config       *config.Config
 	log          *logger.Logger
 }
 
-func NewVideoGenerationHandler(db *gorm.DB, transferService *services.ResourceTransferService, localStorage *storage.LocalStorage, aiService *services.AIService, log *logger.Logger) *VideoGenerationHandler {
+func NewVideoGenerationHandler(db *gorm.DB, cfg *config.Config, transferService *services.ResourceTransferService, localStorage *storage.LocalStorage, aiService *services.AIService, log *logger.Logger) *VideoGenerationHandler {
 	return &VideoGenerationHandler{
-		videoService: services.NewVideoGenerationService(db, transferService, localStorage, aiService, log),
+		videoService: services.NewVideoGenerationService(db, transferService, localStorage, aiService, cfg, log),
+		config:       cfg,
 		log:          log,
 	}
+}
+
+// ComfyUIAvailable 返回 ComfyUI 图生视频是否可用（与文生图共用 base_url）
+func (h *VideoGenerationHandler) ComfyUIAvailable(c *gin.Context) {
+	available := h.config != nil && strings.TrimSpace(h.config.ComfyUI.BaseURL) != ""
+	response.Success(c, gin.H{"available": available})
 }
 
 func (h *VideoGenerationHandler) GenerateVideo(c *gin.Context) {

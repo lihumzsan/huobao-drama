@@ -19,8 +19,8 @@ type Client struct {
 // Params 文生图参数
 type Params struct {
 	Prompt string
-	Width  int // 默认 1080
-	Height int // 默认 1920
+	Width  int // 默认 1920（宽）
+	Height int // 默认 1080（高）
 	Steps  int // 默认 25
 	CFG    float64
 	Seed   int64
@@ -32,10 +32,10 @@ type Params struct {
 // Generate 提交工作流并等待完成，返回生成图片的完整 URL（BaseURL + /view?filename=...）
 func (c *Client) Generate(p *Params) (imageURL string, err error) {
 	if p.Width <= 0 {
-		p.Width = 1080
+		p.Width = 1920
 	}
 	if p.Height <= 0 {
-		p.Height = 1920
+		p.Height = 1080
 	}
 	if p.Steps <= 0 {
 		p.Steps = 25

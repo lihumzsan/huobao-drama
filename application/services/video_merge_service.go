@@ -290,10 +290,13 @@ func (s *VideoMergeService) updateMergeError(mergeID uint, errorMsg string) {
 	s.log.Errorw("Video merge failed", "id", mergeID, "error", errorMsg)
 }
 
+// getVideoClient 返回视频 API 客户端。当前合成流程仅使用本地 FFmpeg，不依赖该 client；
+// 若无「视频」类型 AI 配置，返回 (nil, nil)，合成仍可继续。
 func (s *VideoMergeService) getVideoClient(provider string) (video.VideoClient, error) {
 	config, err := s.aiService.GetDefaultConfig("video")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get video config: %w", err)
+		// 无视频 AI 配置时仍用 FFmpeg 本地合成，不阻断
+		return nil, nil
 	}
 
 	// 使用第一个模型
