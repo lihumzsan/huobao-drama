@@ -1495,6 +1495,15 @@
                         transition: all 0.2s ease;
                       "
                     >
+                      <el-button
+                        class="video-item-delete"
+                        :icon="Delete"
+                        type="danger"
+                        size="small"
+                        circle
+                        @click.stop="deleteVideoResult(video)"
+                        title="删除"
+                      />
                       <div
                         class="video-thumbnail"
                         v-if="video.video_url"
@@ -3107,6 +3116,30 @@ const getStatusType = (status: string) => {
 const playVideo = (video: VideoGeneration) => {
   previewVideo.value = video;
   showVideoPreview.value = true;
+};
+
+// 删除视频生成记录
+const deleteVideoResult = async (video: VideoGeneration) => {
+  try {
+    await ElMessageBox.confirm(
+      "确定删除该视频生成记录？删除后不可恢复。",
+      "删除",
+      {
+        confirmButtonText: "确定",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await videoAPI.deleteVideo(video.id);
+    generatedVideos.value = generatedVideos.value.filter((v) => v.id !== video.id);
+    ElMessage.success("已删除");
+  } catch (error: any) {
+    ElMessage.error("删除失败: " + (error.message || "未知错误"));
+  }
 };
 
 // 添加视频到素材库
@@ -5448,6 +5481,18 @@ onBeforeUnmount(() => {
             border: 1px solid rgba(255, 255, 255, 0.3);
             text-transform: uppercase;
             letter-spacing: 0.3px;
+          }
+        }
+
+        // 视频结果删除按钮
+        &.video-item .video-item-delete {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          z-index: 2;
+          opacity: 0.85;
+          &:hover {
+            opacity: 1;
           }
         }
 
