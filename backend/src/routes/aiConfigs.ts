@@ -4,12 +4,12 @@ import { db, schema } from '../db/index.js'
 import { success, notFound, created, badRequest, now } from '../utils/response.js'
 import { toSnakeCase } from '../utils/transform.js'
 import { joinProviderUrl } from '../services/adapters/url.js'
+import { LOCAL_CODEX_MODEL, LOCAL_CODEX_VIRTUAL_CONFIG, testLocalCodexCli } from '../services/local-codex-agent.js'
 import { redactUrl, logTaskError, logTaskProgress, logTaskSuccess } from '../utils/task-logger.js'
 
 const app = new Hono()
 
 const HUOBAO_PRESET_SERVICES = [
-  { serviceType: 'text', label: '文本', provider: 'chatfire', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-preview', priority: 100 },
   { serviceType: 'image', label: '图片', provider: 'gemini', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-image-preview', priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
@@ -23,7 +23,7 @@ const HUOBAO_AGENT_DEFAULTS = [
   { agentType: 'grid_prompt_generator', name: '图片提示词生成' },
 ] as const
 
-const HUOBAO_AGENT_MODEL = 'gemini-3-pro-preview'
+const HUOBAO_AGENT_MODEL = LOCAL_CODEX_MODEL
 
 function bearerHeaders(apiKey?: string, withJson = false) {
   const headers: Record<string, string> = {}
@@ -125,13 +125,23 @@ function buildProbe(serviceType: string, provider: string, baseUrl: string, mode
 // GET /ai-configs?service_type=text
 app.get('/', async (c) => {
   const serviceType = c.req.query('service_type')
+  if (serviceType === 'text') {
+    return success(c, [LOCAL_CODEX_VIRTUAL_CONFIG])
+  }
+
   let rows = db.select().from(schema.aiServiceConfigs).all()
+    .filter(r => r.serviceType !== 'text')
   if (serviceType) rows = rows.filter(r => r.serviceType === serviceType)
 
   const parsed = rows.map(r => ({
     ...toSnakeCase(r),
     model: r.model ? JSON.parse(r.model) : [],
   }))
+
+  if (!serviceType) {
+    return success(c, [LOCAL_CODEX_VIRTUAL_CONFIG, ...parsed])
+  }
+
   return success(c, parsed)
 })
 
@@ -143,6 +153,9 @@ app.post('/', async (c) => {
   // 验证必填字段
   if (!body.service_type || !body.provider) {
     return badRequest(c, 'service_type and provider are required')
+  }
+  if (body.service_type === 'text') {
+    return badRequest(c, '文本处理固定使用本机 Codex，不保存文本服务配置')
   }
 
   const res = db.insert(schema.aiServiceConfigs).values({
@@ -229,10 +242,12 @@ app.post('/huobao-preset', async (c) => {
     }
   }
 
-  const configs = db.select().from(schema.aiServiceConfigs).all().map(row => ({
-    ...toSnakeCase(row),
-    model: row.model ? JSON.parse(row.model) : [],
-  }))
+  const configs = db.select().from(schema.aiServiceConfigs).all()
+    .filter(row => row.serviceType !== 'text')
+    .map(row => ({
+      ...toSnakeCase(row),
+      model: row.model ? JSON.parse(row.model) : [],
+    }))
   const agents = db.select().from(schema.agentConfigs).all().map(row => toSnakeCase(row))
 
   logTaskSuccess('AIConfig', 'huobao-preset-applied', {
@@ -250,6 +265,50 @@ app.post('/huobao-preset', async (c) => {
 // POST /ai-configs/test
 app.post('/test', async (c) => {
   const body = await c.req.json()
+  const provider = String(body.provider || '').toLowerCase()
+
+  if (body.service_type === 'text' && provider === 'codex') {
+    const probeUrl = 'local-codex://cli'
+    logTaskProgress('AIConfig', 'codex-probe-start', {
+      serviceType: body.service_type,
+      provider: body.provider,
+      method: 'codex exec',
+      url: probeUrl,
+    })
+
+    try {
+      const result = await testLocalCodexCli()
+      logTaskSuccess('AIConfig', 'codex-probe-done', {
+        provider: body.provider,
+        url: probeUrl,
+      })
+      return success(c, {
+        ok: true,
+        reachable: true,
+        status: 200,
+        status_text: 'OK',
+        method: 'codex exec',
+        url: probeUrl,
+        message: '本机 Codex CLI 可用，将使用当前 Codex 登录账号',
+        response_preview: JSON.stringify(result).slice(0, 240),
+      })
+    } catch (error: any) {
+      logTaskError('AIConfig', 'codex-probe-failed', {
+        provider: body.provider,
+        url: probeUrl,
+        error: error.message,
+      })
+      return success(c, {
+        ok: false,
+        reachable: false,
+        method: 'codex exec',
+        url: probeUrl,
+        message: error.message || 'Codex CLI 测试失败',
+        response_preview: '',
+      })
+    }
+  }
+
   if (!body.service_type || !body.provider || !body.base_url) {
     return badRequest(c, 'service_type, provider and base_url are required')
   }
@@ -320,7 +379,7 @@ app.post('/test', async (c) => {
 app.get('/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const [row] = db.select().from(schema.aiServiceConfigs).where(eq(schema.aiServiceConfigs.id, id)).all()
-  if (!row) return notFound(c)
+  if (!row || row.serviceType === 'text') return notFound(c)
   return success(c, {
     ...toSnakeCase(row),
     model: row.model ? JSON.parse(row.model) : [],
@@ -331,6 +390,10 @@ app.get('/:id', async (c) => {
 app.put('/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.json()
+  const [row] = db.select().from(schema.aiServiceConfigs).where(eq(schema.aiServiceConfigs.id, id)).all()
+  if (!row) return notFound(c)
+  if (row.serviceType === 'text') return badRequest(c, '文本处理固定使用本机 Codex，不更新文本服务配置')
+
   const updates: Record<string, any> = { updatedAt: now() }
 
   if ('provider' in body) updates.provider = body.provider

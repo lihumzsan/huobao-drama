@@ -48,7 +48,7 @@
             <div>
               <div class="setup-kicker">Quick Setup</div>
               <div class="setup-title">火宝推荐配置</div>
-              <div class="setup-desc">一键写入文本、图片、视频、音频四类推荐配置，适合作为开箱默认方案。</div>
+              <div class="setup-desc">一键写入图片、视频、音频三类推荐配置，文本固定使用本机 Codex。</div>
             </div>
             <button class="btn btn-primary" @click="presetDialog = true">
               <Sparkles :size="14" /> 火宝一键配置
@@ -69,12 +69,12 @@
           <div class="setup-panel-head compact">
             <div>
               <div class="setup-title">快捷模板</div>
-              <div class="setup-desc">选择服务类型后，直接用模板填充推荐的 `provider / base URL / model`。</div>
+              <div class="setup-desc">图片、视频、音频服务可用模板填充推荐的 `provider / base URL / model`。</div>
             </div>
           </div>
           <div class="template-row">
             <button
-              v-for="st in serviceTypes"
+              v-for="st in manageableServiceTypes"
               :key="st.type"
               class="template-type-chip"
               @click="startAddCfg(st.type)"
@@ -91,7 +91,7 @@
                 <div class="section-subtitle">{{ serviceMeta[st.type].desc }}</div>
               </div>
               <span v-if="countActive(st.type)" class="tag tag-accent">{{ countActive(st.type) }} 已启用</span>
-              <button class="btn btn-ghost btn-sm ml-auto" @click="startAddCfg(st.type)"><Plus :size="13" /> 添加</button>
+              <button v-if="canManageServiceType(st.type)" class="btn btn-ghost btn-sm ml-auto" @click="startAddCfg(st.type)"><Plus :size="13" /> 添加</button>
             </div>
             <div class="config-list">
               <div v-for="c in byType(st.type)" :key="c.id" class="card config-row">
@@ -102,14 +102,14 @@
                       <span class="config-name">{{ c.name || `${c.provider}-${c.service_type}` }}</span>
                     </div>
                     <span class="config-model mono truncate">{{ fmtModel(c.model) }}</span>
-                    <span class="config-base mono truncate">{{ c.base_url || '未设置 Base URL' }}</span>
+                    <span class="config-base mono truncate">{{ c.is_virtual ? '本机 Codex CLI' : (c.base_url || '未设置 Base URL') }}</span>
                   </div>
                 </div>
-                <span :class="['tag', c.api_key ? 'tag-success' : 'tag-error']">{{ c.api_key ? '已配置' : '无密钥' }}</span>
+                <span :class="['tag', c.is_virtual || c.api_key ? 'tag-success' : 'tag-error']">{{ c.is_virtual ? '本机凭据' : (c.api_key ? '已配置' : '无密钥') }}</span>
                 <button class="btn btn-ghost btn-sm" @click="testExistingCfg(c)">测试</button>
-                <label class="toggle"><input type="checkbox" :checked="c.is_active" @change="toggleCfg(c)"><span /></label>
-                <button class="btn btn-ghost btn-icon" @click="startEditCfg(c)"><Pencil :size="13" /></button>
-                <button class="btn btn-ghost btn-icon" @click="delCfg(c.id)"><Trash2 :size="13" /></button>
+                <label v-if="!c.is_virtual" class="toggle"><input type="checkbox" :checked="c.is_active" @change="toggleCfg(c)"><span /></label>
+                <button v-if="!c.is_virtual" class="btn btn-ghost btn-icon" @click="startEditCfg(c)"><Pencil :size="13" /></button>
+                <button v-if="!c.is_virtual" class="btn btn-ghost btn-icon" @click="delCfg(c.id)"><Trash2 :size="13" /></button>
               </div>
               <p v-if="!byType(st.type).length" class="config-empty">暂无配置</p>
             </div>
@@ -131,7 +131,7 @@
             </div>
           </div>
           <h2 class="settings-title">Agent 配置</h2>
-          <p class="settings-desc">高级区只保留 Agent 运行配置。这里可以调整模型、提示词和参数，保存后立即生效。</p>
+          <p class="settings-desc">高级区只保留 Agent 运行配置。这里可以调整提示词和参数，保存后立即生效。</p>
         </div>
         <div class="agent-list">
           <div v-for="a in agentDefs" :key="a.type" class="card agent-card">
@@ -147,8 +147,8 @@
             </div>
             <div v-if="editingAgent === a.type" class="agent-card-body">
               <label class="field">
-                <span class="field-label">模型 <span class="dim">(留空使用 AI 服务默认)</span></span>
-                <BaseSelect v-model="agentForm.model" :options="textModelSelectOptions" placeholder="— 使用 AI 服务默认 —" searchable />
+                <span class="field-label">模型</span>
+                <input class="input" :value="LOCAL_CODEX_MODEL_LABEL" disabled />
               </label>
               <div class="field-row">
                 <label class="field">
@@ -337,13 +337,13 @@
           <div>
             <div class="setup-kicker">Huobao Preset</div>
             <h2 class="modal-title">火宝一键配置</h2>
-            <div class="modal-note">按火宝推荐链路自动创建或更新 4 条服务配置，并同时初始化 5 个 Agent 的默认模型。</div>
+            <div class="modal-note">按火宝推荐链路自动创建或更新图片、视频、音频服务配置，并初始化 5 个 Agent。</div>
           </div>
           <span class="tag tag-success">推荐</span>
         </div>
         <div class="huobao-grid">
           <label class="field">
-            <span class="field-label">Huobao API Key <span class="dim">(统一用于文本 / 图片 / 视频 / 音频)</span></span>
+            <span class="field-label">Huobao API Key <span class="dim">(统一用于图片 / 视频 / 音频)</span></span>
             <input v-model="huobaoForm.apiKey" class="input" type="password" placeholder="用于 api.chatfire.site 全链路服务" />
             <span class="field-hint">还没有账号？<a href="https://api.chatfire.site/" target="_blank" rel="noopener">立即注册 →</a></span>
           </label>
@@ -420,7 +420,10 @@ const cfgTesting = ref(false)
 const cfgTestResult = ref(null)
 const cfgForm = reactive({ name: '', provider: '', api_key: '', base_url: '', modelStr: '', service_type: 'text', priority: 0 })
 const huobaoForm = reactive({ apiKey: '' })
+const LOCAL_CODEX_MODEL = 'gpt-5.5'
+const LOCAL_CODEX_MODEL_LABEL = `${LOCAL_CODEX_MODEL} · Codex xhigh`
 const serviceTypes = [{ type: 'text', label: '文本' }, { type: 'image', label: '图片' }, { type: 'video', label: '视频' }, { type: 'audio', label: '音频' }]
+const manageableServiceTypes = computed(() => serviceTypes.filter(st => st.type !== 'text'))
 const providers = ['ali', 'chatfire', 'gemini', 'minimax', 'openai', 'openrouter', 'vidu', 'volcengine']
 const providerSelectOptions = computed(() => providers.map(p => ({ label: p, value: p })))
 const serviceMeta = {
@@ -430,11 +433,6 @@ const serviceMeta = {
   audio: { label: '音频', desc: '角色试听、旁白与对白语音生成' },
 }
 const providerPresets = {
-  text: {
-    chatfire: { label: 'ChatFire 推荐', baseUrl: 'https://api.chatfire.site', models: ['gemini-3-pro-preview'] },
-    openrouter: { label: 'OpenRouter 推荐', baseUrl: 'https://openrouter.ai/api', models: ['google/gemini-3-flash-preview'] },
-    openai: { label: 'OpenAI 推荐', baseUrl: 'https://api.openai.com', models: ['gpt-4.1-mini'] },
-  },
   image: {
     chatfire: { label: 'ChatFire 推荐', baseUrl: 'https://api.chatfire.site', models: ['doubao-seedream-4-5-251128'] },
     gemini: { label: 'Gemini 推荐', baseUrl: 'https://api.chatfire.site', models: ['gemini-3-pro-image-preview'] },
@@ -450,7 +448,6 @@ const providerPresets = {
   },
 }
 const huobaoPresetCards = [
-  { serviceType: 'text', label: '文本', provider: 'chatfire', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-preview', priority: 100 },
   { serviceType: 'image', label: '图片', provider: 'gemini', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-image-preview', priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
@@ -471,12 +468,14 @@ const endpointHint = computed(() => {
   const base = cfgForm.base_url || 'https://...'
   const prefix = endpointPrefixes[provider] || ''
   if (!provider) return '选择服务商后显示推荐端点前缀'
+  if (provider === 'codex') return '本机 Codex CLI（不使用 Base URL / API Key）'
   return `${base}${prefix}`
 })
 
 function byType(t) { return cfgs.value.filter(c => c.service_type === t) }
 function countActive(t) { return byType(t).filter(c => c.is_active).length }
 function fmtModel(m) { return Array.isArray(m) ? m.join(', ') : m || '—' }
+function canManageServiceType(t) { return t !== 'text' }
 function presetsByType(type) {
   const group = providerPresets[type] || {}
   return Object.entries(group).map(([provider, preset]) => ({ provider, ...preset }))
@@ -491,9 +490,13 @@ function applyProviderPreset(type, provider) {
 }
 
 async function loadCfgs() { try { cfgs.value = await aiConfigAPI.list() } catch (e) { toast.error(e.message) } }
-async function toggleCfg(c) { await aiConfigAPI.update(c.id, { is_active: !c.is_active }); loadCfgs() }
+async function toggleCfg(c) { if (c.is_virtual) return; await aiConfigAPI.update(c.id, { is_active: !c.is_active }); loadCfgs() }
 async function delCfg(id) { await aiConfigAPI.del(id); toast.success('已删除'); loadCfgs() }
 function startAddCfg(t) {
+  if (!canManageServiceType(t)) {
+    toast.info('文本处理固定使用本机 Codex')
+    return
+  }
   cfgEditId.value = null
   cfgTestResult.value = null
   Object.assign(cfgForm, { name: '', provider: '', api_key: '', base_url: '', modelStr: '', service_type: t, priority: 0 })
@@ -502,6 +505,7 @@ function startAddCfg(t) {
   cfgDialog.value = true
 }
 function startEditCfg(c) {
+  if (c.is_virtual) return
   cfgEditId.value = c.id
   cfgTestResult.value = null
   Object.assign(cfgForm, {
@@ -537,7 +541,8 @@ async function testDraftCfg() {
   })
 }
 async function testExistingCfg(c) {
-  startEditCfg(c)
+  if (!c.is_virtual) startEditCfg(c)
+  else cfgTestResult.value = null
   await testCfgPayload({
     service_type: c.service_type,
     provider: c.provider,
@@ -678,23 +683,6 @@ function getAgentCfg(type) {
   return agentCfgs.value.find(a => a.agent_type === type)
 }
 
-const textModelGroups = computed(() => {
-  return cfgs.value
-    .filter(c => c.service_type === 'text' && c.is_active && c.api_key)
-    .map(c => ({
-      label: `${c.provider} — ${c.name}`,
-      models: Array.isArray(c.model) ? c.model : (c.model ? [c.model] : []),
-    }))
-    .filter(g => g.models.length > 0)
-})
-
-const textModelSelectOptions = computed(() =>
-  textModelGroups.value.map(g => ({
-    label: g.label,
-    options: g.models.map(m => ({ label: m, value: m })),
-  }))
-)
-
 async function loadAgents() {
   try { agentCfgs.value = await agentConfigAPI.list() }
   catch (e) { toast.error(e.message) }
@@ -703,7 +691,7 @@ async function loadAgents() {
 function toggleAgentEdit(type) {
   if (editingAgent.value === type) { editingAgent.value = null; return }
   const cfg = getAgentCfg(type)
-  agentForm.model = cfg?.model || ''
+  agentForm.model = LOCAL_CODEX_MODEL
   agentForm.temperature = cfg?.temperature ?? 0.7
   agentForm.max_tokens = cfg?.max_tokens ?? 4096
   agentForm.system_prompt = cfg?.system_prompt || defaultPrompts[type] || ''
@@ -724,7 +712,7 @@ async function saveAgentCfg(type) {
     const data = {
       agent_type: type,
       name: agentDefs.find(a => a.type === type)?.label || type,
-      model: agentForm.model,
+      model: LOCAL_CODEX_MODEL,
       temperature: agentForm.temperature,
       max_tokens: agentForm.max_tokens,
       system_prompt: agentForm.system_prompt,

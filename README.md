@@ -8,7 +8,7 @@
 [![Vue Version](https://img.shields.io/badge/Vue-3.x-4FC08D?style=flat&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-[功能特性](#功能特性) • [快速开始](#快速开始) • [部署指南](#部署指南)
+[功能特性](#功能特性) • [快速开始](#快速开始)
 
 > 🔥 **AI创作省钱攻略｜快乐马 & Seedance 合作专属折扣，优惠到底** 👉 [立即查看](https://aiad.dfycloud.com/)
 
@@ -200,9 +200,7 @@ cd ../frontend && npm install
 
 ### 🎯 启动项目
 
-#### 方式一：开发模式（推荐）
-
-前后端分离，支持热重载：
+本机开发环境启动，前后端分离，支持热重载。从项目根目录分别打开两个终端运行：
 
 ```bash
 # 终端1：启动后端
@@ -218,143 +216,13 @@ npm run dev
 - 后端 API: `http://localhost:5679/api/v1`
 - 前端自动代理 `/api` 和 `/static` 到后端
 
-#### 方式二：单服务模式
-
-后端同时提供 API 和前端静态文件：
-
-```bash
-# 1. 构建前端
-cd frontend && npm run generate
-
-# 2. 启动后端
-cd ../backend && npm start
-```
-
-访问: `http://localhost:5679`
-
 ### 🗄️ 数据库
 
 数据库表在首次启动时自动创建，无需手动迁移。默认路径 `data/huobao_drama.db`，可通过环境变量覆盖：
 
 ```bash
-DB_PATH=/path/to/your.db npm start
-```
-
----
-
-## 📦 部署指南
-
-### ☁️ 云端一键部署（推荐 3080Ti）
-
-👉 [优云智算，一键部署](https://www.compshare.cn/images/fScvzK95NUk5?referral_code=8hUJOaWz3YzG64FI2OlCiB&ytag=GPU_YY_YX_GitHub_huobaoai)
-
-> ⚠️ **注意**：云端部署方案数据请及时存储到本地
-
----
-
-### 🐳 Docker 部署（推荐）
-
-#### 方式一：Docker Compose（推荐）
-
-```bash
-# 启动服务
-docker compose up -d
-
-# 查看日志
-docker compose logs -f
-
-# 停止服务
-docker compose down
-```
-
-#### 方式二：Docker 命令
-
-```bash
-# 从 Docker Hub 运行
-docker run -d \
-  --name huobao-drama \
-  -p 5679:5679 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/configs/config.yaml:/app/configs/config.yaml \
-  --restart unless-stopped \
-  huobao/huobao-drama:latest
-
-# 查看日志
-docker logs -f huobao-drama
-```
-
-> **注意**：Linux 用户需添加 `--add-host=host.docker.internal:host-gateway` 以访问宿主机服务
-
-**本地构建**（可选）：
-
-```bash
-docker build -t huobao-drama:latest .
-docker run -d --name huobao-drama -p 5679:5679 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/configs/config.yaml:/app/configs/config.yaml \
-  huobao-drama:latest
-```
-
-**Docker 部署优势：**
-
-- ✅ 开箱即用，内置 FFmpeg 和默认配置
-- ✅ 前后端合并为单镜像、单端口
-- ✅ 环境一致性，避免依赖问题
-- ✅ `data/` 目录 volume 挂载，数据持久化
-
-#### 🔗 访问宿主机服务（Ollama / 本地模型）
-
-容器内可通过 `http://host.docker.internal:端口号` 访问宿主机服务。
-
-**配置步骤：**
-
-1. 宿主机启动服务（监听所有接口）：
-
-   ```bash
-   export OLLAMA_HOST=0.0.0.0:11434 && ollama serve
-   ```
-
-2. 在 Web 界面「设置 → AI 服务配置」中填写：
-   - Base URL: `http://host.docker.internal:11434/v1`
-   - Provider: `openai`
-   - Model: `qwen2.5:latest`
-
----
-
-### 🏭 传统部署方式
-
-```bash
-# 1. 构建前端
-cd frontend && npm run generate && cd ..
-
-# 2. 启动后端
-cd backend && npm start
-```
-
-需要上传到服务器的文件：
-
-```
-backend/          # 后端源码 + node_modules
-frontend/dist/    # 前端构建产物
-configs/config.yaml
-data/             # 数据目录（首次运行自动创建）
-skills/           # Agent 技能文件
-```
-
-#### Nginx 反向代理
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://localhost:5679;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
+cd backend
+DB_PATH=/path/to/your.db npm run dev
 ```
 
 ---
@@ -382,15 +250,9 @@ server {
 
 ## 📝 常见问题
 
-### Q: Docker 容器如何访问宿主机的 Ollama？
-
-A: 使用 `http://host.docker.internal:11434/v1` 作为 Base URL。注意：
-1. 宿主机 Ollama 需监听 `0.0.0.0`：`export OLLAMA_HOST=0.0.0.0:11434 && ollama serve`
-2. Linux 用户使用 `docker run` 需添加：`--add-host=host.docker.internal:host-gateway`
-
 ### Q: FFmpeg 未安装或找不到？
 
-A: 确保 FFmpeg 已安装并在 PATH 环境变量中。运行 `ffmpeg -version` 验证。Docker 部署已内置 FFmpeg。
+A: 确保 FFmpeg 已安装并在 PATH 环境变量中。运行 `ffmpeg -version` 验证。
 
 ### Q: 前端无法连接后端 API？
 

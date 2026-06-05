@@ -5,6 +5,7 @@ import { success, badRequest, now } from '../utils/response.js'
 import { generateImage } from '../services/image-generation.js'
 import { splitGridImage } from '../services/grid-split.js'
 import { createAgent } from '../agents/index.js'
+import { runLocalCodexGridPrompt, shouldUseLocalCodexText } from '../services/local-codex-agent.js'
 import { logTaskError, logTaskPayload, logTaskProgress } from '../utils/task-logger.js'
 
 const app = new Hono()
@@ -353,6 +354,18 @@ async function tryAgentGridPrompt(
   mode: string,
   referenceLegend: string,
 ) {
+  if (shouldUseLocalCodexText()) {
+    return runLocalCodexGridPrompt({
+      episodeId,
+      dramaId,
+      storyboardIds,
+      rows,
+      cols,
+      mode,
+      referenceLegend,
+    })
+  }
+
   const agent = createAgent('grid_prompt_generator', episodeId, dramaId)
   if (!agent) return null
 

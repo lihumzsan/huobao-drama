@@ -3,6 +3,7 @@
  */
 import { Hono } from 'hono'
 import { createAgent, validAgentTypes } from '../agents/index.js'
+import { runLocalCodexAgent, shouldUseLocalCodexText, type LocalCodexAgentType } from '../services/local-codex-agent.js'
 import { success, badRequest } from '../utils/response.js'
 import { logTaskError, logTaskPayload, logTaskProgress, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
@@ -44,15 +45,32 @@ app.post('/:type/chat', async (c) => {
     return badRequest(c, 'drama_id and episode_id are required')
   }
 
-  const agent = createAgent(agentType, episode_id, drama_id)
-  if (!agent) {
-    logTaskError('Agent', agentType, { reason: 'agent not found' })
-    return badRequest(c, 'Agent not found')
-  }
-
   const startTime = performance.now()
 
   try {
+    if (shouldUseLocalCodexText()) {
+      logTaskProgress('Agent', 'local-codex-start', {
+        agentType,
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+      })
+      const result = await runLocalCodexAgent({
+        agentType: agentType as LocalCodexAgentType,
+        message,
+        dramaId: drama_id,
+        episodeId: episode_id,
+      })
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(1)
+      logTaskSuccess('Agent', 'local-codex-complete', { agentType, elapsedSeconds: elapsed })
+      return success(c, result)
+    }
+
+    const agent = createAgent(agentType, episode_id, drama_id)
+    if (!agent) {
+      logTaskError('Agent', agentType, { reason: 'agent not found' })
+      return badRequest(c, 'Agent not found')
+    }
+
     const result = await agent.generate(
       [{ role: 'user', content: message }],
       { maxSteps: 20 },
