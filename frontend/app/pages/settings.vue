@@ -105,7 +105,7 @@
                     <span class="config-base mono truncate">{{ c.is_virtual ? '本机 Codex CLI' : (c.base_url || '未设置 Base URL') }}</span>
                   </div>
                 </div>
-                <span :class="['tag', c.is_virtual || c.api_key ? 'tag-success' : 'tag-error']">{{ c.is_virtual ? '本机凭据' : (c.api_key ? '已配置' : '无密钥') }}</span>
+                <span :class="['tag', configCredentialOk(c) ? 'tag-success' : 'tag-error']">{{ configCredentialLabel(c) }}</span>
                 <button class="btn btn-ghost btn-sm" @click="testExistingCfg(c)">测试</button>
                 <label v-if="!c.is_virtual" class="toggle"><input type="checkbox" :checked="c.is_active" @change="toggleCfg(c)"><span /></label>
                 <button v-if="!c.is_virtual" class="btn btn-ghost btn-icon" @click="startEditCfg(c)"><Pencil :size="13" /></button>
@@ -343,8 +343,8 @@
         </div>
         <div class="huobao-grid">
           <label class="field">
-            <span class="field-label">Huobao API Key <span class="dim">(统一用于图片 / 视频 / 音频)</span></span>
-            <input v-model="huobaoForm.apiKey" class="input" type="password" placeholder="用于 api.chatfire.site 全链路服务" />
+            <span class="field-label">Huobao API Key <span class="dim">(用于视频 / 音频)</span></span>
+            <input v-model="huobaoForm.apiKey" class="input" type="password" placeholder="用于 api.chatfire.site 视频和音频服务" />
             <span class="field-hint">还没有账号？<a href="https://api.chatfire.site/" target="_blank" rel="noopener">立即注册 →</a></span>
           </label>
         </div>
@@ -424,7 +424,7 @@ const LOCAL_CODEX_MODEL = 'gpt-5.5'
 const LOCAL_CODEX_MODEL_LABEL = `${LOCAL_CODEX_MODEL} · Codex xhigh`
 const serviceTypes = [{ type: 'text', label: '文本' }, { type: 'image', label: '图片' }, { type: 'video', label: '视频' }, { type: 'audio', label: '音频' }]
 const manageableServiceTypes = computed(() => serviceTypes.filter(st => st.type !== 'text'))
-const providers = ['ali', 'chatfire', 'gemini', 'minimax', 'openai', 'openrouter', 'vidu', 'volcengine']
+const providers = ['ali', 'chatfire', 'comfyui', 'gemini', 'minimax', 'openai', 'openrouter', 'vidu', 'volcengine']
 const providerSelectOptions = computed(() => providers.map(p => ({ label: p, value: p })))
 const serviceMeta = {
   text: { label: '文本', desc: '剧本改写、角色场景提取、分镜拆解等 Agent 文本能力' },
@@ -434,6 +434,7 @@ const serviceMeta = {
 }
 const providerPresets = {
   image: {
+    comfyui: { label: 'ComfyUI 本地', baseUrl: 'http://127.0.0.1:8188', models: [] },
     chatfire: { label: 'ChatFire 推荐', baseUrl: 'https://api.chatfire.site', models: ['doubao-seedream-4-5-251128'] },
     gemini: { label: 'Gemini 推荐', baseUrl: 'https://api.chatfire.site', models: ['gemini-3-pro-image-preview'] },
     volcengine: { label: '火山推荐', baseUrl: 'https://ark.cn-beijing.volces.com', models: ['doubao-seedream-4-0-250828'] },
@@ -448,7 +449,7 @@ const providerPresets = {
   },
 }
 const huobaoPresetCards = [
-  { serviceType: 'image', label: '图片', provider: 'gemini', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-image-preview', priority: 99 },
+  { serviceType: 'image', label: '图片', provider: 'comfyui', baseUrl: 'http://127.0.0.1:8188', model: '按场景匹配工作流', priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
 ]
@@ -461,14 +462,16 @@ const endpointPrefixes = {
   volcengine: '/api/v3',
   ali: '/api/v1',
   vidu: '/ent/v2',
+  comfyui: '',
 }
 
 const endpointHint = computed(() => {
   const provider = cfgForm.provider
-  const base = cfgForm.base_url || 'https://...'
+  const base = cfgForm.base_url || (provider === 'comfyui' ? 'http://127.0.0.1:8188' : 'https://...')
   const prefix = endpointPrefixes[provider] || ''
   if (!provider) return '选择服务商后显示推荐端点前缀'
   if (provider === 'codex') return '本机 Codex CLI（不使用 Base URL / API Key）'
+  if (provider === 'comfyui') return `${base.replace(/\/+$/, '')}/system_stats`
   return `${base}${prefix}`
 })
 
@@ -476,6 +479,12 @@ function byType(t) { return cfgs.value.filter(c => c.service_type === t) }
 function countActive(t) { return byType(t).filter(c => c.is_active).length }
 function fmtModel(m) { return Array.isArray(m) ? m.join(', ') : m || '—' }
 function canManageServiceType(t) { return t !== 'text' }
+function configCredentialOk(c) { return c.is_virtual || c.provider === 'comfyui' || !!c.api_key }
+function configCredentialLabel(c) {
+  if (c.is_virtual) return '本机凭据'
+  if (c.provider === 'comfyui') return '本地源头'
+  return c.api_key ? '已配置' : '无密钥'
+}
 function presetsByType(type) {
   const group = providerPresets[type] || {}
   return Object.entries(group).map(([provider, preset]) => ({ provider, ...preset }))

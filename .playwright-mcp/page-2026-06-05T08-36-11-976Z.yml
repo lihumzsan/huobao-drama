@@ -1,0 +1,118 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - button "火宝短剧 火宝短剧 Huobao Shorts" [ref=e6] [cursor=pointer]:
+        - img "火宝短剧" [ref=e8]
+        - generic [ref=e9]:
+          - generic [ref=e10]: 火宝短剧
+          - generic [ref=e11]: Huobao Shorts
+      - navigation [ref=e12]:
+        - link "项目" [ref=e13] [cursor=pointer]:
+          - /url: /
+          - img [ref=e14]
+          - generic [ref=e19]: 项目
+        - link "设置" [ref=e20] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e21]
+          - generic [ref=e24]: 设置
+    - main [ref=e30]:
+      - generic [ref=e31]:
+        - complementary [ref=e32]:
+          - generic [ref=e33]:
+            - generic [ref=e34]: 基础
+            - button "AI 服务" [ref=e35] [cursor=pointer]:
+              - img [ref=e36]
+              - text: AI 服务
+          - generic [ref=e39]:
+            - generic [ref=e41]: Agent 高级配置
+            - paragraph [ref=e43]: 仅展开 Agent 配置与 Skills。工作台功能和分镜字段保持默认可见。
+        - generic [ref=e45]:
+          - generic [ref=e46]:
+            - generic [ref=e47]:
+              - img "火宝短剧" [ref=e49]
+              - generic [ref=e50]:
+                - generic [ref=e51]: Huobao Shorts
+                - generic [ref=e52]: 火宝短剧
+            - heading "AI 服务配置" [level=2] [ref=e53]
+            - paragraph [ref=e54]: 先用推荐模板快速落配置，再按服务类型微调。工作台创建集时会锁定所选图片、视频和音频能力。
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - generic [ref=e57]:
+                - generic [ref=e58]: Quick Setup
+                - generic [ref=e59]: 火宝推荐配置
+                - generic [ref=e60]: 一键写入图片、视频、音频三类推荐配置，文本固定使用本机 Codex。
+              - button "火宝一键配置" [ref=e61] [cursor=pointer]:
+                - img [ref=e62]
+                - text: 火宝一键配置
+            - generic [ref=e64]:
+              - article [ref=e65]:
+                - generic [ref=e66]:
+                  - generic [ref=e67]: 图片
+                  - generic [ref=e68]: comfyui
+                - generic [ref=e69]: 按场景匹配工作流
+                - generic [ref=e70]: http://127.0.0.1:8188
+              - article [ref=e71]:
+                - generic [ref=e72]:
+                  - generic [ref=e73]: 视频
+                  - generic [ref=e74]: volcengine
+                - generic [ref=e75]: doubao-seedance-1-5-pro-251215
+                - generic [ref=e76]: https://api.chatfire.site/volcengine
+              - article [ref=e77]:
+                - generic [ref=e78]:
+                  - generic [ref=e79]: 音频
+                  - generic [ref=e80]: minimax
+                - generic [ref=e81]: speech-2.8-hd
+                - generic [ref=e82]: https://api.chatfire.site/minimax
+          - generic [ref=e83]:
+            - generic [ref=e85]:
+              - generic [ref=e86]: 快捷模板
+              - generic [ref=e87]: "图片、视频、音频服务可用模板填充推荐的 `provider / base URL / model`。"
+            - generic [ref=e88]:
+              - button "图片" [ref=e89] [cursor=pointer]
+              - button "视频" [ref=e90] [cursor=pointer]
+              - button "音频" [ref=e91] [cursor=pointer]
+          - generic [ref=e92]:
+            - generic [ref=e93]:
+              - generic [ref=e94]:
+                - generic [ref=e95]:
+                  - text: 文本
+                  - generic [ref=e96]: 剧本改写、角色场景提取、分镜拆解等 Agent 文本能力
+                - generic [ref=e97]: 1 已启用
+              - generic [ref=e99]:
+                - generic [ref=e101]:
+                  - generic [ref=e102]:
+                    - generic [ref=e103]: codex
+                    - generic [ref=e104]: 本机 Codex 文本服务
+                  - generic [ref=e105]: gpt-5.5
+                  - generic [ref=e106]: 本机 Codex CLI
+                - generic [ref=e107]: 本机凭据
+                - button "测试" [ref=e108] [cursor=pointer]
+            - generic [ref=e109]:
+              - generic [ref=e110]:
+                - generic [ref=e111]:
+                  - text: 图片
+                  - generic [ref=e112]: 角色图、场景图、镜头图与首尾帧等静态图像生成
+                - button "添加" [ref=e113] [cursor=pointer]:
+                  - img [ref=e114]
+                  - text: 添加
+              - paragraph [ref=e116]: 暂无配置
+            - generic [ref=e117]:
+              - generic [ref=e118]:
+                - generic [ref=e119]:
+                  - text: 视频
+                  - generic [ref=e120]: 镜头视频生成，支持单图、多图和首尾帧模式
+                - button "添加" [ref=e121] [cursor=pointer]:
+                  - img [ref=e122]
+                  - text: 添加
+              - paragraph [ref=e124]: 暂无配置
+            - generic [ref=e125]:
+              - generic [ref=e126]:
+                - generic [ref=e127]:
+                  - text: 音频
+                  - generic [ref=e128]: 角色试听、旁白与对白语音生成
+                - button "添加" [ref=e129] [cursor=pointer]:
+                  - img [ref=e130]
+                  - text: 添加
+              - paragraph [ref=e132]: 暂无配置
+  - region "Notifications alt+T":
+    - list

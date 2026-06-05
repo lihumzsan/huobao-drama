@@ -10,7 +10,7 @@ import { redactUrl, logTaskError, logTaskProgress, logTaskSuccess } from '../uti
 const app = new Hono()
 
 const HUOBAO_PRESET_SERVICES = [
-  { serviceType: 'image', label: '图片', provider: 'gemini', baseUrl: 'https://api.chatfire.site', model: 'gemini-3-pro-image-preview', priority: 99 },
+  { serviceType: 'image', label: '图片', provider: 'comfyui', baseUrl: 'http://127.0.0.1:8188', model: '', priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
 ] as const
@@ -57,6 +57,15 @@ function buildProbe(serviceType: string, provider: string, baseUrl: string, mode
     const url = new URL(joinProviderUrl(baseUrl, '/v1beta', `/models/${m || 'gemini-2.5-flash'}:generateContent`))
     if (apiKey) url.searchParams.set('key', apiKey)
     return { method: 'POST', url: url.toString(), headers: geminiHeaders(apiKey, true), body: {} }
+  }
+
+  if (p === 'comfyui') {
+    return {
+      method: 'GET',
+      url: joinProviderUrl(baseUrl, '', '/system_stats'),
+      headers: {},
+      body: undefined,
+    }
   }
 
   if (p === 'openai' || p === 'openrouter' || p === 'chatfire') {
@@ -184,7 +193,7 @@ app.post('/', async (c) => {
 app.post('/huobao-preset', async (c) => {
   const body = await c.req.json()
   const apiKey = String(body.api_key || '').trim()
-  if (!apiKey) return badRequest(c, 'api_key is required')
+  if (!apiKey) return badRequest(c, 'video/audio api_key is required')
 
   const ts = now()
 
@@ -197,8 +206,8 @@ app.post('/huobao-preset', async (c) => {
       provider: preset.provider,
       name: `火宝默认${preset.label}服务`,
       baseUrl: preset.baseUrl,
-      apiKey,
-      model: JSON.stringify([preset.model]),
+      apiKey: preset.provider === 'comfyui' ? '' : apiKey,
+      model: JSON.stringify(preset.model ? [preset.model] : []),
       priority: preset.priority,
       isActive: true,
       updatedAt: ts,

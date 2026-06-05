@@ -87,7 +87,7 @@ async function processImageGeneration(id: number, config: AIConfig) {
 
     // 使用 Adapter 构建请求
     const resolvedReferenceImages = await normalizeReferenceImages(record.referenceImages)
-    const { url, method, headers, body } = adapter.buildGenerateRequest(config, {
+    const { url, method, headers, body } = await adapter.buildGenerateRequest(config, {
       id: record.id,
       model: record.model,
       prompt: record.prompt,
@@ -241,7 +241,7 @@ async function pollImageTask(id: number, config: AIConfig, taskId: string) {
       if (!resp.ok) continue
       const result = await resp.json() as any
 
-      const pollResp = adapter.parsePollResponse(result)
+      const pollResp = adapter.parsePollResponse(result, config)
 
       if (pollResp.status === 'completed' && pollResp.imageUrl) {
         logTaskSuccess('ImageTask', 'poll-complete', { id, taskId, imageUrl: pollResp.imageUrl })
