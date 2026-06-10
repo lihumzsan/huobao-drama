@@ -130,14 +130,19 @@ export interface VideoPollResponse {
 export interface TTSProviderAdapter {
   provider: string
 
-  buildGenerateRequest(config: AIConfig, params: any): ProviderRequest
+  generateAudio?(config: AIConfig, params: any): Promise<TTSGeneratedAudio>
 
-  parseResponse(result: any): {
-    audioHex: string
-    audioLength: number
-    sampleRate: number
-    bitrate: number
-    format: string
-    channel: number
-  }
+  buildGenerateRequest?(config: AIConfig, params: any): ProviderRequest
+
+  parseResponse?(result: any): TTSGeneratedAudio
+}
+
+export interface TTSGeneratedAudio {
+  audioHex?: string
+  audioBuffer?: Buffer
+  audioLength: number
+  sampleRate: number
+  bitrate: number
+  format: string
+  channel: number
 }

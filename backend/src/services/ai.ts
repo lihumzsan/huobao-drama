@@ -68,9 +68,26 @@ export function getTextConfig(): AIConfig {
   return config
 }
 
+export function getDefaultComfyUiAudioConfig(): AIConfig {
+  return {
+    provider: 'comfyui',
+    baseUrl: process.env.COMFYUI_AUDIO_BASE_URL || process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188',
+    apiKey: process.env.COMFYUI_AUDIO_API_KEY || '',
+    model: process.env.COMFYUI_AUDIO_MODEL || '',
+  }
+}
+
 export function getAudioConfig(): AIConfig {
   const config = getActiveConfig('audio')
-  if (!config) throw new Error('No active audio AI config — 请在设置中添加音频服务')
+  if (!config) {
+    const fallback = getDefaultComfyUiAudioConfig()
+    logTaskWarn('AIConfig', 'audio-config-default-comfyui', {
+      provider: fallback.provider,
+      baseUrl: fallback.baseUrl,
+      model: fallback.model,
+    })
+    return fallback
+  }
   return config
 }
 

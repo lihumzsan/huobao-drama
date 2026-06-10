@@ -45,6 +45,36 @@ export async function generateTTS(params: TTSParams): Promise<string> {
     params,
   })
 
+  const parsed = adapter.generateAudio
+    ? await adapter.generateAudio(config, params)
+    : await requestJsonTTS(adapter, config, params)
+
+  const buffer = parsed.audioBuffer || Buffer.from(parsed.audioHex || '', 'hex')
+  if (!buffer.length) throw new Error('No audio data in TTS response')
+
+  // 保存到本地
+  const audioDir = path.join(STORAGE_ROOT, 'audio')
+  fs.mkdirSync(audioDir, { recursive: true })
+  const filename = `${uuid()}.${parsed.format || 'mp3'}`
+  const filePath = path.join(audioDir, filename)
+  fs.writeFileSync(filePath, buffer)
+
+  const relativePath = `static/audio/${filename}`
+  logTaskSuccess('AudioTask', 'tts-saved', {
+    provider: config.provider,
+    voice: params.voice,
+    path: relativePath,
+    bytes: buffer.length,
+    audioMs: parsed.audioLength,
+  })
+  return relativePath
+}
+
+async function requestJsonTTS(adapter: ReturnType<typeof getTTSAdapter>, config: ReturnType<typeof getAudioConfigById>, params: TTSParams) {
+  if (!adapter.buildGenerateRequest || !adapter.parseResponse) {
+    throw new Error(`TTS provider ${adapter.provider} does not support JSON request mode`)
+  }
+
   const { url, method, headers, body } = adapter.buildGenerateRequest(config, params)
   logTaskProgress('AudioTask', 'request', {
     provider: config.provider,
@@ -73,27 +103,7 @@ export async function generateTTS(params: TTSParams): Promise<string> {
   }
 
   const result = await resp.json()
-  const parsed = adapter.parseResponse(result)
-
-  // 将 hex 解码为二进制
-  const buffer = Buffer.from(parsed.audioHex, 'hex')
-
-  // 保存到本地
-  const audioDir = path.join(STORAGE_ROOT, 'audio')
-  fs.mkdirSync(audioDir, { recursive: true })
-  const filename = `${uuid()}.${parsed.format || 'mp3'}`
-  const filePath = path.join(audioDir, filename)
-  fs.writeFileSync(filePath, buffer)
-
-  const relativePath = `static/audio/${filename}`
-  logTaskSuccess('AudioTask', 'tts-saved', {
-    provider: config.provider,
-    voice: params.voice,
-    path: relativePath,
-    bytes: buffer.length,
-    audioMs: parsed.audioLength,
-  })
-  return relativePath
+  return adapter.parseResponse(result)
 }
 
 /**

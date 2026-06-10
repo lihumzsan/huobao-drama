@@ -115,7 +115,7 @@
             </div>
             <div class="toolbar-right">
               <span v-if="rawLen" class="char-count">{{ rawLen }} 字</span>
-              <button class="btn btn-sm" @click="saveRaw(); toast.success('已保存')">
+              <button class="btn btn-sm" @click="saveRawManually">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                 保存
               </button>
@@ -358,15 +358,21 @@
                   </div>
                 </div>
 
-                <div class="voice-card-copy">
-                  <div class="voice-card-text">{{ c.description || c.personality || c.appearance || '暂无角色描述，可根据人物定位手动挑选音色。' }}</div>
+                <div class="voice-character-profile">
+                  <div class="voice-card-label">人物形象</div>
+                  <div class="voice-character-text">{{ characterImageText(c) }}</div>
+                </div>
+
+                <div class="voice-persona-card">
+                  <div class="voice-card-label">声音形象</div>
+                  <div class="voice-persona-text">{{ voicePersonaText(c) }}</div>
                 </div>
 
                 <div class="voice-select-block">
                   <span class="voice-block-label">选择音色</span>
                   <BaseSelect
                     :model-value="c.voice_style || c.voiceStyle || ''"
-                    :options="voiceSelectOptions"
+                    :options="getVoiceSelectOptions(c)"
                     placeholder="选择音色"
                     searchable
                     style="width:100%"
@@ -382,12 +388,24 @@
                   <div class="voice-profile-traits">{{ getVoiceProfile(c.voice_style || c.voiceStyle)?.traits }}</div>
                   <div class="voice-profile-fit">{{ getVoiceProfile(c.voice_style || c.voiceStyle)?.suitable }}</div>
                 </div>
+                <div v-else-if="isAudioVoice(c.voice_style || c.voiceStyle)" class="voice-profile-card voice-uploaded-card">
+                  <div class="voice-profile-head">
+                    <span class="voice-profile-name">已上传音色</span>
+                    <span class="tag tag-success">ComfyUI</span>
+                  </div>
+                  <div class="voice-profile-traits">{{ uploadedVoiceLabel(c) }}</div>
+                  <div class="voice-profile-fit">生成试听后可确认角色声音效果</div>
+                </div>
 
                 <div class="voice-actions-row">
-                  <button class="btn btn-sm" :disabled="!(c.voice_style || c.voiceStyle)" @click="genSample(c.id)">
+                  <button class="btn btn-sm" :disabled="!(c.voice_style || c.voiceStyle) || isPendingVoiceUpload(c.id)" @click="genSample(c.id)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
                     {{ (c.voice_sample_url || c.voiceSampleUrl) ? '重新试听' : '生成试听' }}
                   </button>
+                  <label class="btn btn-sm voice-upload-control" :class="{ 'is-disabled': isPendingVoiceUpload(c.id) }">
+                    {{ isPendingVoiceUpload(c.id) ? '上传中' : '上传音色' }}
+                    <input type="file" :accept="roleVoiceAccept" :disabled="isPendingVoiceUpload(c.id)" @change="uploadRoleVoice(c, $event)" />
+                  </label>
                   <span class="dim" style="font-size:11px">{{ (c.voice_sample_url || c.voiceSampleUrl) ? '已生成声音样本，可直接播放' : '生成后可快速确认角色声音' }}</span>
                 </div>
 
@@ -1440,7 +1458,7 @@ import { toast } from 'vue-sonner'
 import {
   Users, MapPin, Video, ImageIcon, Layers, Mic2, FileText, FolderKanban, Clapperboard, Download,
 } from 'lucide-vue-next'
-import { dramaAPI, episodeAPI, storyboardAPI, characterAPI, sceneAPI, imageAPI, videoAPI, composeAPI, mergeAPI, gridAPI, aiConfigAPI, voicesAPI } from '~/composables/useApi'
+import { dramaAPI, episodeAPI, storyboardAPI, characterAPI, sceneAPI, imageAPI, videoAPI, composeAPI, mergeAPI, gridAPI, aiConfigAPI, voicesAPI, uploadAPI } from '~/composables/useApi'
 import { useAgent } from '~/composables/useAgent'
 import BaseSelect from '~/components/BaseSelect.vue'
 
@@ -1503,8 +1521,11 @@ const pendingSceneImageIds = ref([])
 const pendingShotFrameKeys = ref([])
 const pendingVideoIds = ref([])
 const pendingComposeIds = ref([])
+const pendingVoiceUploadIds = ref([])
 const failedVideoMessages = ref({})
 const failedComposeMessages = ref({})
+const uploadedVoiceNames = ref({})
+const roleVoiceAccept = 'audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm'
 const imageViewer = ref({ open: false, src: '', title: '' })
 
 function configLabel(config) {
@@ -1559,6 +1580,179 @@ function videoFailMessage(id) {
   return failedVideoMessages.value[id] || ''
 }
 
+function isPendingVoiceUpload(id) {
+  return pendingVoiceUploadIds.value.includes(id)
+}
+
+function isAudioVoice(value) {
+  return /\.(aac|flac|m4a|mp3|ogg|opus|wav|webm)(\?.*)?$/i.test(String(value || ''))
+}
+
+function uploadedVoiceLabel(char) {
+  const stored = char?.voice_style || char?.voiceStyle || ''
+  return uploadedVoiceNames.value[char.id] || decodeURIComponent(String(stored).split('/').pop() || 'uploaded voice')
+}
+
+function characterImageText(char) {
+  const parts = uniqueTextParts([
+    char?.role,
+    char?.appearance,
+    char?.personality,
+    char?.description,
+  ])
+  return parts.length ? parts.join('；') : '暂无人物形象，可先提取角色信息后再分配音色。'
+}
+
+function voicePersonaText(char) {
+  const source = characterSourceText(char)
+  const age = inferVoiceAge(char, source)
+  const texture = inferVoiceTexture(char, source)
+  const gender = inferCharacterVoiceGender(char, source)
+  const direction = inferVoiceDirection(char, source)
+  return `${age}${texture}${gender}：${direction}`
+}
+
+function characterSourceText(char) {
+  const characterText = uniqueTextParts([
+    char?.name,
+    char?.role,
+    char?.description,
+    char?.appearance,
+    char?.personality,
+  ]).join('。')
+  const source = `${rawContent.value || ''}\n${scriptContent.value || ''}`
+  return uniqueTextParts([characterText, ...characterMentionSnippets(char?.name, source)]).join('。')
+}
+
+function characterMentionSnippets(name, source) {
+  if (!name || !source) return []
+  const snippets = []
+  let fromIndex = 0
+  while (snippets.length < 3) {
+    const index = source.indexOf(name, fromIndex)
+    if (index < 0) break
+    const start = Math.max(0, index - 80)
+    const end = Math.min(source.length, index + name.length + 120)
+    snippets.push(source.slice(start, end).replace(/\s+/g, ' ').trim())
+    fromIndex = index + name.length
+  }
+  return snippets
+}
+
+function uniqueTextParts(parts) {
+  const seen = new Set()
+  return parts
+    .map(part => String(part || '').trim())
+    .filter((part) => {
+      if (!part || seen.has(part) || part === '未描述。') return false
+      seen.add(part)
+      return true
+    })
+}
+
+function inferVoiceAge(char, source) {
+  const name = char?.name || ''
+  const ownText = uniqueTextParts([char?.role, char?.description, char?.appearance, char?.personality]).join(' ')
+  const text = `${name} ${ownText} ${source}`
+  const ageMatch = ownText.match(/([一二两三四五六七八九十\d]{1,3})[岁歲]/)
+  if (ageMatch) {
+    const age = parseAgeToken(ageMatch[1])
+    if (age) return `${age} 岁`
+  }
+  if (name === '马凯' || /十二岁|同桌/.test(ownText)) return '12 岁'
+  if (name === '陈迹' || /十八岁|少年|男主角/.test(ownText)) return '18 岁'
+  if (name === '李青鸟' || /年轻人|青年/.test(ownText)) return '24 岁'
+  if (name === '老人' || /老人|老爷子|佝偻/.test(ownText)) return '70 岁'
+  if (name === '老刘' || /中年医生|医生/.test(ownText)) return '45 岁'
+  if (name === '陈硕' || name === '王慧玲' || /二叔|二婶|中年夫妻|父母/.test(ownText)) return '40 岁'
+  if (name === '男护士甲' || /粗暴/.test(ownText)) return '35 岁'
+  if (name === '男护士乙' || /护士/.test(ownText)) return '30 岁'
+  if (/小女孩|少女/.test(text)) return '16 岁'
+  return '成年'
+}
+
+function parseAgeToken(token) {
+  if (/^\d+$/.test(token)) return Number(token)
+  const digits = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  if (token === '十') return 10
+  if (token.includes('十')) {
+    const [tensText, onesText] = token.split('十')
+    const tens = tensText ? digits[tensText] || 0 : 1
+    const ones = onesText ? digits[onesText] || 0 : 0
+    return tens * 10 + ones
+  }
+  return digits[token] || 0
+}
+
+function inferCharacterVoiceGender(char, source) {
+  const name = char?.name || ''
+  const ownText = uniqueTextParts([char?.role, char?.description, char?.appearance, char?.personality]).join(' ')
+  const text = `${name} ${ownText} ${source}`
+  if (name.includes('父母')) return '成熟声'
+  if (['陈迹', '老刘', '陈硕', '男护士甲', '男护士乙', '病人甲', '病人乙', '老人', '李青鸟', '马凯'].includes(name)) return '男声'
+  if (['王慧玲'].includes(name)) return '女声'
+  if (/男主|男性|男护士|二叔|父亲|爸爸|老爷子/.test(ownText)) return '男声'
+  if (/女主|女性|二婶|母亲|妈妈|女孩|少女|奶奶/.test(ownText)) return '女声'
+  const voice = char?.voice_style || char?.voiceStyle || ''
+  const profileGender = getVoiceProfile(voice)?.gender || ''
+  if (profileGender && profileGender !== '中性') return profileGender
+  if (/女|二婶|王慧玲|母亲|妈妈|女孩|少女|奶奶|玲/.test(`${name} ${ownText}`)) return '女声'
+  if (/男|二叔|男护士|老人|老爷子|少年|父亲|爸爸|陈硕|老刘|陈迹|李青鸟|马凯|病人/.test(`${name} ${ownText}`)) return '男声'
+  return '中性声'
+}
+
+function inferVoiceTexture(char, source) {
+  const name = char?.name || ''
+  const ownText = uniqueTextParts([char?.role, char?.description, char?.appearance, char?.personality]).join(' ')
+  const text = `${name} ${ownText} ${source}`
+  if (name === '陈迹') return '清澈少年'
+  if (name === '老刘') return '冷硬低沉'
+  if (name === '陈硕') return '急躁中年'
+  if (name === '王慧玲') return '市侩尖细'
+  if (name === '男护士甲') return '粗硬音'
+  if (name === '男护士乙') return '紧绷低声'
+  if (name === '病人甲') return '诡异轻声'
+  if (name === '病人乙') return '荒诞沙哑'
+  if (name === '老人') return '苍老低哑'
+  if (name === '李青鸟') return '干涩空洞'
+  if (name.includes('父母')) return '温和回忆'
+  if (/粗暴|冷硬|束缚/.test(ownText)) return '粗硬音'
+  if (/空洞|沉默|神秘|干涩|妄想症/.test(ownText)) return '干涩空洞'
+  if (/老人|老爷子|佝偻|清醒|归零|威望/.test(ownText)) return '苍老低哑'
+  if (/冷淡|精明|贪婪|诊断书|皮笑肉不笑/.test(ownText)) return '冷硬低沉'
+  if (/急切|心虚|强作镇定|黑皮包/.test(ownText)) return '急躁中年'
+  if (/贪财|计较|胆怯|尴尬讨好/.test(ownText)) return '市侩尖细'
+  if (/好奇|诡异|小声/.test(ownText)) return '诡异轻声'
+  if (/一本正经|计算器|联合国|荒诞/.test(ownText)) return '荒诞沙哑'
+  if (/清秀|清澈|平静|冷静|真诚/.test(ownText)) return '清澈少年'
+  if (/遗产|已故/.test(ownText)) return '温和回忆'
+  if (/紧张|怕事|急于脱身/.test(ownText)) return '紧绷低声'
+  return inferCharacterVoiceGender(char, source).includes('女') ? '自然柔和' : '沉稳自然'
+}
+
+function inferVoiceDirection(char, source) {
+  const name = char?.name || ''
+  const ownText = uniqueTextParts([char?.role, char?.description, char?.appearance, char?.personality]).join(' ')
+  const text = `${ownText} ${source}`
+  if (name === '陈迹') return '平静克制，语气真诚却带荒诞冷幽默，遇到诡异场面仍有隐约警觉。'
+  if (name === '老刘') return '公事公办，语调冷淡，话里带精明算计和隐性威胁感。'
+  if (name === '陈硕') return '语速偏快，强作镇定又不耐烦，谈到财产时带贪婪和心虚。'
+  if (name === '王慧玲') return '尖细急促，计较钱财时带怨气，担心后果时压低声音露出胆怯。'
+  if (name === '男护士甲') return '短促命令式语调，粗鲁不耐烦，带看守般的压迫感。'
+  if (name === '男护士乙') return '压着恐惧，语气紧张急促，急于完成交接后离开。'
+  if (name === '病人甲') return '轻飘贴耳，带神经质笑意和不合时宜的天真。'
+  if (name === '病人乙') return '一本正经地说荒诞内容，制造诡异又滑稽的反差。'
+  if (name === '老人') return '沉稳缓慢，清醒笃定，一开口就能压住全场。'
+  if (name === '李青鸟') return '虚弱沙哑，平静疏离，像从梦外传来的预言。'
+  if (name === '马凯') return '稚嫩普通，带一点小心虚和学生气，适合作为回忆中的短促声音。'
+  if (name.includes('父母')) return '柔和遥远，带回忆感和遗憾感。'
+  if (/冷静|沉稳|克制/.test(text)) return '语气收束稳定，情绪不外放，适合低冲突对白。'
+  if (/胆怯|紧张|心虚/.test(text)) return '尾音发紧，停顿偏多，表现不安和试探。'
+  if (/贪婪|强势|威严/.test(text)) return '重音靠前，句尾下压，带控制感。'
+  if (/活泼|好奇|荒诞/.test(text)) return '节奏跳跃，情绪外露，适合制造反差。'
+  return '语气自然清晰，跟随角色身份和当前剧情情绪变化。'
+}
+
 function isPendingCompose(id) {
   return pendingComposeIds.value.includes(id)
 }
@@ -1577,10 +1771,24 @@ const visualChars = computed(() => chars.value.filter(c => !isNarratorCharacter(
 const lockedImageConfigId = computed(() => episode.value?.image_config_id || episode.value?.imageConfigId || null)
 const lockedVideoConfigId = computed(() => episode.value?.video_config_id || episode.value?.videoConfigId || null)
 const lockedAudioConfigId = computed(() => episode.value?.audio_config_id || episode.value?.audioConfigId || null)
-const lockedAudioProvider = computed(() => audioConfigs.value.find(c => c.id === lockedAudioConfigId.value)?.provider || '')
+const defaultComfyUiAudioConfig = Object.freeze({
+  id: null,
+  name: '默认 ComfyUI 音频',
+  provider: 'comfyui',
+  model: '',
+  is_active: true,
+})
+function isConfigActive(config) {
+  return !!config && config.is_active !== false && config.isActive !== false
+}
+const effectiveAudioConfig = computed(() => {
+  const locked = audioConfigs.value.find(c => c.id === lockedAudioConfigId.value)
+  return isConfigActive(locked) ? locked : (audioConfigs.value.find(isConfigActive) || defaultComfyUiAudioConfig)
+})
+const lockedAudioProvider = computed(() => effectiveAudioConfig.value?.provider || 'comfyui')
 const lockedImageConfigLabel = computed(() => configLabel(imageConfigs.value.find(c => c.id === lockedImageConfigId.value)))
 const lockedVideoConfigLabel = computed(() => configLabel(videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)))
-const lockedAudioConfigLabel = computed(() => configLabel(audioConfigs.value.find(c => c.id === lockedAudioConfigId.value)))
+const lockedAudioConfigLabel = computed(() => configLabel(effectiveAudioConfig.value))
 
 // Grid tool state
 const gridDialog = ref(false)
@@ -1786,9 +1994,9 @@ const canGoNext = computed(() => {
   return false
 })
 function goPrevStep() { if (scriptStep.value > 0) scriptStep.value-- }
-function goNextStep() {
-  if (scriptStep.value === 0 && localRaw.value.trim()) { saveRaw() }
-  if (scriptStep.value === 1 && localScript.value.trim()) { saveScr() }
+async function goNextStep() {
+  if (scriptStep.value === 0 && localRaw.value.trim()) { await saveRaw() }
+  if (scriptStep.value === 1 && localScript.value.trim()) { await saveScr() }
   if (scriptStep.value === 4) { panel.value = 'production'; return }
   if (canGoNext.value) scriptStep.value++
 }
@@ -2328,6 +2536,16 @@ function updateCharVoice(charId, voiceId) {
     c.voiceSampleUrl = ''
   }
 }
+
+function getVoiceSelectOptions(char) {
+  const voice = char?.voice_style || char?.voiceStyle || ''
+  if (!isAudioVoice(voice)) return voiceSelectOptions.value
+  return [
+    { label: `已上传 · ${uploadedVoiceLabel(char)}`, value: voice },
+    ...voiceSelectOptions.value,
+  ]
+}
+
 function getVoiceProfile(voiceId) {
   return voiceProfiles.value.find(v => v.id === voiceId) || null
 }
@@ -2437,21 +2655,53 @@ async function refresh() {
   try { mergeData.value = await mergeAPI.status(epId.value) } catch {}
 }
 
-function saveRaw() { episodeAPI.update(epId.value, { content: localRaw.value }); episode.value.content = localRaw.value }
-function saveScr() { episodeAPI.update(epId.value, { script_content: localScript.value }); episode.value.script_content = localScript.value }
-function doRewrite() { saveRaw(); runAgent('script_rewriter', '请读取剧本并改写为格式化剧本，然后保存', dramaId, epId.value, refresh) }
-function skipRewrite() {
+async function saveRaw() {
+  await episodeAPI.update(epId.value, { content: localRaw.value })
+  if (episode.value) episode.value.content = localRaw.value
+}
+async function saveRawManually() {
+  try {
+    await saveRaw()
+    toast.success('已保存')
+  } catch (e) {
+    toast.error(e.message)
+  }
+}
+async function saveScr() {
+  await episodeAPI.update(epId.value, { script_content: localScript.value })
+  if (episode.value) episode.value.script_content = localScript.value
+}
+async function doRewrite() {
+  if (!(localRaw.value || '').trim()) {
+    toast.warning('请先填写原始内容')
+    return
+  }
+  try {
+    await saveRaw()
+    await runAgent('script_rewriter', '请读取剧本并改写为格式化剧本，然后保存', dramaId, epId.value, refresh)
+  } catch (e) {
+    toast.error(e.message)
+  }
+}
+async function skipRewrite() {
   const raw = (localRaw.value || rawContent.value || '').trim()
   if (!raw) {
     toast.warning('请先填写原始内容')
     return
   }
   localScript.value = raw
-  saveScr()
+  await saveScr()
   toast.success('已跳过 AI 改写，当前将直接使用原始内容')
   scriptStep.value = 2
 }
-function doExtract() { saveScr(); runAgent('extractor', '请从剧本中提取所有角色和场景信息，提取时自动与项目已有数据进行去重合并', dramaId, epId.value, refresh) }
+async function doExtract() {
+  try {
+    await saveScr()
+    await runAgent('extractor', '请从剧本中提取所有角色和场景信息，提取时自动与项目已有数据进行去重合并', dramaId, epId.value, refresh)
+  } catch (e) {
+    toast.error(e.message)
+  }
+}
 function doVoice() { runAgent('voice_assigner', '请为所有角色分配合适的音色', dramaId, epId.value, refresh) }
 async function batchGenSamples() {
   const pending = chars.value.filter(c => (c.voice_style || c.voiceStyle) && !(c.voice_sample_url || c.voiceSampleUrl))
@@ -2466,12 +2716,53 @@ async function batchGenSamples() {
   if (failCount) toast.error(`${failCount} 份试听文件生成失败`)
   await refresh()
 }
+async function uploadRoleVoice(char, event) {
+  const input = event?.target
+  const file = input?.files?.[0]
+  if (!file) return
+
+  if (String(lockedAudioProvider.value || '').toLowerCase() !== 'comfyui') {
+    toast.warning('上传音色需要先把当前集音频配置切换为 ComfyUI')
+    input.value = ''
+    return
+  }
+
+  try {
+    if (!isPendingVoiceUpload(char.id)) pendingVoiceUploadIds.value.push(char.id)
+    const result = await uploadAPI.audio(file)
+    await characterAPI.update(char.id, { voice_style: result.path, voice_provider: 'comfyui' })
+
+    const c = chars.value.find(ch => ch.id === char.id)
+    if (c) {
+      c.voice_style = result.path
+      c.voiceStyle = result.path
+      c.voice_provider = 'comfyui'
+      c.voiceProvider = 'comfyui'
+      c.voice_sample_url = ''
+      c.voiceSampleUrl = ''
+    }
+    uploadedVoiceNames.value = { ...uploadedVoiceNames.value, [char.id]: file.name }
+    toast.success('音色已上传')
+  } catch (e) {
+    toast.error(e.message)
+  } finally {
+    pendingVoiceUploadIds.value = pendingVoiceUploadIds.value.filter(id => id !== char.id)
+    input.value = ''
+  }
+}
+
 function doBreakdown() {
   const cfg = videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)
   const label = cfg ? `${cfg.name} (${cfg.provider})` : '默认'
   runAgent('storyboard_breaker', `请拆解分镜并生成视频提示词。视频模型：${label}，请根据该模型的特性和时长限制生成合适的视频提示词。`, dramaId, epId.value, refresh)
 }
-async function genSample(id) { try { await characterAPI.voiceSample(id, epId.value); toast.success('试听已生成'); refresh() } catch (e) { toast.error(e.message) } }
+async function genSample(id) {
+  try {
+    await characterAPI.voiceSample(id, epId.value)
+    toast.success('试听已生成')
+    refresh()
+  } catch (e) { toast.error(e.message) }
+}
 async function addShot() { await storyboardAPI.create({ episode_id: epId.value, storyboard_number: sbs.value.length + 1, title: `镜头${sbs.value.length + 1}`, duration: 10 }); refresh() }
 
 function sleep(ms) {
@@ -3420,14 +3711,41 @@ onMounted(() => { refresh(); loadConfigs(); loadVoices() })
 .voice-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .voice-card-copy { min-height: 58px; }
 .voice-card-text { font-size: 12px; line-height: 1.7; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.voice-character-profile,
+.voice-persona-card {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(27, 41, 64, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.voice-character-profile { background: rgba(255,255,255,0.62); }
+.voice-persona-card { background: linear-gradient(135deg, rgba(19, 51, 121, 0.07), rgba(255,255,255,0.82)); border-color: rgba(19, 51, 121, 0.12); }
+.voice-card-label { font-size: 10px; font-weight: 700; color: var(--text-3); }
+.voice-character-text,
+.voice-persona-text {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.voice-character-text { -webkit-line-clamp: 3; }
+.voice-persona-text { -webkit-line-clamp: 2; color: var(--text-0); font-weight: 600; }
 .voice-select-block { display: flex; flex-direction: column; gap: 6px; }
 .voice-block-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
 .voice-profile-card { padding: 12px; border-radius: 16px; background: linear-gradient(135deg, rgba(19, 51, 121, 0.08), rgba(255,255,255,0.78)); border: 1px solid rgba(19, 51, 121, 0.1); display: flex; flex-direction: column; gap: 4px; }
+.voice-uploaded-card { background: linear-gradient(135deg, rgba(20, 115, 92, 0.08), rgba(255,255,255,0.78)); border-color: rgba(20, 115, 92, 0.16); }
 .voice-profile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .voice-profile-name { font-size: 13px; font-weight: 700; color: var(--accent-text); }
 .voice-profile-traits { font-size: 11px; color: var(--text-1); }
 .voice-profile-fit { font-size: 10px; color: var(--text-2); line-height: 1.5; }
 .voice-actions-row { display: flex; align-items: center; gap: 8px; }
+.voice-upload-control { position: relative; cursor: pointer; }
+.voice-upload-control input { position: absolute; inset: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.voice-upload-control.is-disabled { opacity: 0.55; pointer-events: none; }
 .voice-player audio { width: 100%; height: 30px; border-radius: var(--radius); }
 .char-avatar.lg { width: 38px; height: 38px; font-size: 16px; }
 

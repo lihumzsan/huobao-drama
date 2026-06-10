@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -34,12 +35,25 @@ export interface CodexProcessResult {
 const DEFAULT_CODEX_MODEL = 'gpt-5.5'
 const DEFAULT_REASONING_EFFORT: CodexReasoningEffort = 'xhigh'
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
+let codexProcessQueue: Promise<void> = Promise.resolve()
+
+function resolveCodexBin(configuredBin?: string) {
+  const explicit = configuredBin || process.env.CODEX_BIN
+  if (explicit) return explicit
+
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    const desktopCli = path.join(process.env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin', 'codex.exe')
+    if (existsSync(desktopCli)) return desktopCli
+  }
+
+  return 'codex'
+}
 
 export function buildCodexExecCommand(options: CodexExecCommandOptions) {
   const model = options.model || DEFAULT_CODEX_MODEL
   const reasoningEffort = options.reasoningEffort || DEFAULT_REASONING_EFFORT
   return {
-    bin: options.codexBin || process.env.CODEX_BIN || 'codex',
+    bin: resolveCodexBin(options.codexBin),
     args: [
       'exec',
       '--ephemeral',
@@ -74,12 +88,21 @@ export function parseCodexJsonOutput(raw: string) {
 }
 
 export function createCodexCliErrorMessage(result: CodexProcessResult) {
-  const detail = (result.stderr || result.stdout || '').trim().slice(0, 1200)
+  const detail = compactProcessOutput(result.stderr || result.stdout || '')
   const status = result.signal ? `signal ${result.signal}` : `exit ${result.code ?? 'unknown'}`
   const loginHint = /login|logged|auth|unauthorized|token/i.test(detail)
     ? '请先在本机终端运行 codex login，确认当前系统用户已登录 Codex。'
     : '请确认本机已安装 Codex CLI，且 codex 在 PATH 中可用；也可以用 CODEX_BIN 指定可执行文件路径。'
   return `Codex CLI 执行失败（${status}）。${loginHint}${detail ? `\n${detail}` : ''}`
+}
+
+function compactProcessOutput(raw: string, maxLength = 2000) {
+  const text = (raw || '').trim()
+  if (text.length <= maxLength) return text
+
+  const marker = '\n... <output truncated> ...\n'
+  const sideLength = Math.floor((maxLength - marker.length) / 2)
+  return `${text.slice(0, sideLength)}${marker}${text.slice(-sideLength)}`
 }
 
 export async function runCodexCliJson<T = unknown>(options: CodexRunOptions<T>): Promise<T> {
@@ -97,7 +120,7 @@ export async function runCodexCliJson<T = unknown>(options: CodexRunOptions<T>):
       reasoningEffort: options.reasoningEffort,
     })
 
-    const result = await runProcess(command.bin, command.args, options.prompt, options.cwd, options.timeoutMs || DEFAULT_TIMEOUT_MS)
+    const result = await runProcessQueued(command.bin, command.args, options.prompt, options.cwd, options.timeoutMs || DEFAULT_TIMEOUT_MS)
     if (result.code !== 0) {
       throw new Error(createCodexCliErrorMessage(result))
     }
@@ -120,11 +143,17 @@ async function readOutputOrStdout(outputPath: string, stdout: string) {
   return stdout
 }
 
+function shouldUseShell(bin: string) {
+  if (process.platform !== 'win32') return false
+  const ext = path.extname(bin).toLowerCase()
+  return !path.isAbsolute(bin) || ext === '.cmd' || ext === '.bat'
+}
+
 function runProcess(bin: string, args: string[], input: string, cwd: string, timeoutMs: number): Promise<CodexProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd,
-      shell: process.platform === 'win32',
+      shell: shouldUseShell(bin),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -146,4 +175,19 @@ function runProcess(bin: string, args: string[], input: string, cwd: string, tim
     })
     child.stdin.end(input)
   })
+}
+
+async function runProcessQueued(bin: string, args: string[], input: string, cwd: string, timeoutMs: number) {
+  const previous = codexProcessQueue
+  let releaseCurrent!: () => void
+  codexProcessQueue = new Promise<void>(resolve => {
+    releaseCurrent = resolve
+  })
+
+  await previous
+  try {
+    return await runProcess(bin, args, input, cwd, timeoutMs)
+  } finally {
+    releaseCurrent()
+  }
 }
