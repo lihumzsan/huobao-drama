@@ -5,6 +5,7 @@ import { db, schema } from '../db/index.js'
 import { eq } from 'drizzle-orm'
 import { logTaskProgress, logTaskWarn } from '../utils/task-logger.js'
 import { joinProviderUrl } from './adapters/url.js'
+import { LOCAL_CODEX_MODEL } from './local-codex-agent.js'
 
 export type ServiceType = 'text' | 'image' | 'video' | 'audio'
 
@@ -66,6 +67,32 @@ export function getTextConfig(): AIConfig {
   const config = getActiveConfig('text')
   if (!config) throw new Error('No active text AI config')
   return config
+}
+
+export function getDefaultCodexImageConfig(): AIConfig {
+  return {
+    provider: 'codex',
+    baseUrl: 'local-codex://image-cli',
+    apiKey: '',
+    model: LOCAL_CODEX_MODEL,
+  }
+}
+
+export function getImageConfigById(id?: number | null): AIConfig {
+  if (id) {
+    const config = getConfigById(id)
+    if (config) return config
+  }
+  const active = getActiveConfig('image')
+  if (active) return active
+
+  const fallback = getDefaultCodexImageConfig()
+  logTaskWarn('AIConfig', 'image-config-default-codex', {
+    provider: fallback.provider,
+    baseUrl: fallback.baseUrl,
+    model: fallback.model,
+  })
+  return fallback
 }
 
 export function getDefaultComfyUiAudioConfig(): AIConfig {

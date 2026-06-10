@@ -14,6 +14,7 @@ import { ViduVideoAdapter } from './vidu-video'
 import { AliImageAdapter } from './ali-image'
 import { AliVideoAdapter } from './ali-video'
 import { ComfyUiImageAdapter } from './comfyui-image'
+import { CodexImageAdapter } from './codex-image'
 import type { ImageProviderAdapter, VideoProviderAdapter, TTSProviderAdapter } from './types'
 
 // 图片 Adapter 注册表
@@ -24,6 +25,7 @@ export const imageAdapters: Record<string, ImageProviderAdapter> = {
   volcengine: new VolcEngineImageAdapter(),
   ali: new AliImageAdapter(),
   comfyui: new ComfyUiImageAdapter(),
+  codex: new CodexImageAdapter(),
   // Chatfire - 待确认 API 格式，暂用 OpenAI
   chatfire: new OpenAIImageAdapter(),
 }

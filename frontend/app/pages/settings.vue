@@ -424,7 +424,7 @@ const LOCAL_CODEX_MODEL = 'gpt-5.5'
 const LOCAL_CODEX_MODEL_LABEL = `${LOCAL_CODEX_MODEL} · Codex xhigh`
 const serviceTypes = [{ type: 'text', label: '文本' }, { type: 'image', label: '图片' }, { type: 'video', label: '视频' }, { type: 'audio', label: '音频' }]
 const manageableServiceTypes = computed(() => serviceTypes.filter(st => st.type !== 'text'))
-const providers = ['ali', 'chatfire', 'comfyui', 'gemini', 'minimax', 'openai', 'openrouter', 'vidu', 'volcengine']
+const providers = ['ali', 'chatfire', 'codex', 'comfyui', 'gemini', 'minimax', 'openai', 'openrouter', 'vidu', 'volcengine']
 const providerSelectOptions = computed(() => providers.map(p => ({ label: p, value: p })))
 const serviceMeta = {
   text: { label: '文本', desc: '剧本改写、角色场景提取、分镜拆解等 Agent 文本能力' },
@@ -434,6 +434,7 @@ const serviceMeta = {
 }
 const providerPresets = {
   image: {
+    codex: { label: 'Codex 本机', baseUrl: 'local-codex://image-cli', models: [LOCAL_CODEX_MODEL] },
     comfyui: { label: 'ComfyUI 本地', baseUrl: 'http://127.0.0.1:8188', models: [] },
     chatfire: { label: 'ChatFire 推荐', baseUrl: 'https://api.chatfire.site', models: ['doubao-seedream-4-5-251128'] },
     gemini: { label: 'Gemini 推荐', baseUrl: 'https://api.chatfire.site', models: ['gemini-3-pro-image-preview'] },
@@ -449,7 +450,7 @@ const providerPresets = {
   },
 }
 const huobaoPresetCards = [
-  { serviceType: 'image', label: '图片', provider: 'comfyui', baseUrl: 'http://127.0.0.1:8188', model: '按场景匹配工作流', priority: 99 },
+  { serviceType: 'image', label: '图片', provider: 'codex', baseUrl: 'local-codex://image-cli', model: LOCAL_CODEX_MODEL, priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
 ]
@@ -463,6 +464,7 @@ const endpointPrefixes = {
   ali: '/api/v1',
   vidu: '/ent/v2',
   comfyui: '',
+  codex: '',
 }
 
 const endpointHint = computed(() => {
@@ -479,9 +481,10 @@ function byType(t) { return cfgs.value.filter(c => c.service_type === t) }
 function countActive(t) { return byType(t).filter(c => c.is_active).length }
 function fmtModel(m) { return Array.isArray(m) ? m.join(', ') : m || '—' }
 function canManageServiceType(t) { return t !== 'text' }
-function configCredentialOk(c) { return c.is_virtual || c.provider === 'comfyui' || !!c.api_key }
+function configCredentialOk(c) { return c.is_virtual || c.provider === 'comfyui' || c.provider === 'codex' || !!c.api_key }
 function configCredentialLabel(c) {
   if (c.is_virtual) return '本机凭据'
+  if (c.provider === 'codex') return '本机能力'
   if (c.provider === 'comfyui') return '本地源头'
   return c.api_key ? '已配置' : '无密钥'
 }

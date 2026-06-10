@@ -10,7 +10,7 @@ import { redactUrl, logTaskError, logTaskProgress, logTaskSuccess } from '../uti
 const app = new Hono()
 
 const HUOBAO_PRESET_SERVICES = [
-  { serviceType: 'image', label: '图片', provider: 'comfyui', baseUrl: 'http://127.0.0.1:8188', model: '', priority: 99 },
+  { serviceType: 'image', label: '图片', provider: 'codex', baseUrl: 'local-codex://image-cli', model: LOCAL_CODEX_MODEL, priority: 99 },
   { serviceType: 'video', label: '视频', provider: 'volcengine', baseUrl: 'https://api.chatfire.site/volcengine', model: 'doubao-seedance-1-5-pro-251215', priority: 98 },
   { serviceType: 'audio', label: '音频', provider: 'minimax', baseUrl: 'https://api.chatfire.site/minimax', model: 'speech-2.8-hd', priority: 97 },
 ] as const
@@ -24,6 +24,43 @@ const HUOBAO_AGENT_DEFAULTS = [
 ] as const
 
 const HUOBAO_AGENT_MODEL = LOCAL_CODEX_MODEL
+type AIServiceConfigRow = typeof schema.aiServiceConfigs.$inferSelect
+
+function sortConfigRows(rows: AIServiceConfigRow[]) {
+  return [...rows].sort((a, b) => {
+    const activeDiff = Number(b.isActive) - Number(a.isActive)
+    if (activeDiff) return activeDiff
+    const priorityDiff = (b.priority || 0) - (a.priority || 0)
+    if (priorityDiff) return priorityDiff
+    return (b.id || 0) - (a.id || 0)
+  })
+}
+
+function enforceCodexImagePreset(codexImageConfigId: number, ts: string) {
+  let disabledImageConfigCount = 0
+  let migratedEpisodeCount = 0
+
+  const imageConfigs = db.select().from(schema.aiServiceConfigs)
+    .where(eq(schema.aiServiceConfigs.serviceType, 'image')).all()
+  for (const config of imageConfigs) {
+    if (config.id === codexImageConfigId || !config.isActive) continue
+    db.update(schema.aiServiceConfigs)
+      .set({ isActive: false, updatedAt: ts })
+      .where(eq(schema.aiServiceConfigs.id, config.id)).run()
+    disabledImageConfigCount += 1
+  }
+
+  const episodes = db.select().from(schema.episodes).all()
+  for (const episode of episodes) {
+    if (episode.imageConfigId === codexImageConfigId) continue
+    db.update(schema.episodes)
+      .set({ imageConfigId: codexImageConfigId, updatedAt: ts })
+      .where(eq(schema.episodes.id, episode.id)).run()
+    migratedEpisodeCount += 1
+  }
+
+  return { disabledImageConfigCount, migratedEpisodeCount }
+}
 
 function bearerHeaders(apiKey?: string, withJson = false) {
   const headers: Record<string, string> = {}
@@ -63,6 +100,15 @@ function buildProbe(serviceType: string, provider: string, baseUrl: string, mode
     return {
       method: 'GET',
       url: joinProviderUrl(baseUrl, '', '/system_stats'),
+      headers: {},
+      body: undefined,
+    }
+  }
+
+  if (p === 'codex') {
+    return {
+      method: 'codex exec',
+      url: serviceType === 'image' ? 'local-codex://image-cli' : 'local-codex://cli',
       headers: {},
       body: undefined,
     }
@@ -142,7 +188,7 @@ app.get('/', async (c) => {
     .filter(r => r.serviceType !== 'text')
   if (serviceType) rows = rows.filter(r => r.serviceType === serviceType)
 
-  const parsed = rows.map(r => ({
+  const parsed = sortConfigRows(rows).map(r => ({
     ...toSnakeCase(r),
     model: r.model ? JSON.parse(r.model) : [],
   }))
@@ -196,6 +242,7 @@ app.post('/huobao-preset', async (c) => {
   if (!apiKey) return badRequest(c, 'video/audio api_key is required')
 
   const ts = now()
+  let codexImageConfigId: number | undefined
 
   for (const preset of HUOBAO_PRESET_SERVICES) {
     const [existing] = db.select().from(schema.aiServiceConfigs).where(eq(schema.aiServiceConfigs.serviceType, preset.serviceType)).all()
@@ -206,7 +253,7 @@ app.post('/huobao-preset', async (c) => {
       provider: preset.provider,
       name: `火宝默认${preset.label}服务`,
       baseUrl: preset.baseUrl,
-      apiKey: preset.provider === 'comfyui' ? '' : apiKey,
+      apiKey: preset.provider === 'codex' ? '' : apiKey,
       model: JSON.stringify(preset.model ? [preset.model] : []),
       priority: preset.priority,
       isActive: true,
@@ -215,13 +262,21 @@ app.post('/huobao-preset', async (c) => {
 
     if (existing) {
       db.update(schema.aiServiceConfigs).set(values).where(eq(schema.aiServiceConfigs.id, existing.id)).run()
+      if (preset.serviceType === 'image' && preset.provider === 'codex') codexImageConfigId = existing.id
     } else {
-      db.insert(schema.aiServiceConfigs).values({
+      const inserted = db.insert(schema.aiServiceConfigs).values({
         ...values,
         createdAt: ts,
       }).run()
+      if (preset.serviceType === 'image' && preset.provider === 'codex') {
+        codexImageConfigId = Number(inserted.lastInsertRowid)
+      }
     }
   }
+
+  const codexImagePreset = codexImageConfigId
+    ? enforceCodexImagePreset(codexImageConfigId, ts)
+    : { disabledImageConfigCount: 0, migratedEpisodeCount: 0 }
 
   for (const agent of HUOBAO_AGENT_DEFAULTS) {
     const [existing] = db.select().from(schema.agentConfigs).where(eq(schema.agentConfigs.agentType, agent.agentType)).all()
@@ -251,7 +306,7 @@ app.post('/huobao-preset', async (c) => {
     }
   }
 
-  const configs = db.select().from(schema.aiServiceConfigs).all()
+  const configs = sortConfigRows(db.select().from(schema.aiServiceConfigs).all())
     .filter(row => row.serviceType !== 'text')
     .map(row => ({
       ...toSnakeCase(row),
@@ -262,6 +317,8 @@ app.post('/huobao-preset', async (c) => {
   logTaskSuccess('AIConfig', 'huobao-preset-applied', {
     serviceCount: HUOBAO_PRESET_SERVICES.length,
     agentCount: HUOBAO_AGENT_DEFAULTS.length,
+    codexImageConfigId,
+    ...codexImagePreset,
   })
 
   return success(c, {
@@ -276,8 +333,8 @@ app.post('/test', async (c) => {
   const body = await c.req.json()
   const provider = String(body.provider || '').toLowerCase()
 
-  if (body.service_type === 'text' && provider === 'codex') {
-    const probeUrl = 'local-codex://cli'
+  if ((body.service_type === 'text' || body.service_type === 'image') && provider === 'codex') {
+    const probeUrl = body.service_type === 'image' ? 'local-codex://image-cli' : 'local-codex://cli'
     logTaskProgress('AIConfig', 'codex-probe-start', {
       serviceType: body.service_type,
       provider: body.provider,
@@ -298,7 +355,9 @@ app.post('/test', async (c) => {
         status_text: 'OK',
         method: 'codex exec',
         url: probeUrl,
-        message: '本机 Codex CLI 可用，将使用当前 Codex 登录账号',
+        message: body.service_type === 'image'
+          ? '本机 Codex CLI 可用。图片生成会要求 Codex 在本地写出 PNG 文件。'
+          : '本机 Codex CLI 可用，将使用当前 Codex 登录账号',
         response_preview: JSON.stringify(result).slice(0, 240),
       })
     } catch (error: any) {

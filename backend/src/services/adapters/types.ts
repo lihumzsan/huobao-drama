@@ -6,6 +6,11 @@ export interface ImageProviderAdapter {
   provider: string
 
   /**
+   * 本地图片生成。用于 Codex CLI 这类不走 HTTP API、直接写出本地图片的 provider。
+   */
+  generateLocal?(config: AIConfig, record: ImageGenerationRecord): Promise<ImageLocalGenerationResponse>
+
+  /**
    * 构建图片生成请求
    * @param config AI 配置 { baseUrl, apiKey, model }
    * @param record 图片生成记录
@@ -104,6 +109,12 @@ export interface ImageGenResponse {
   taskId?: string
   /** 同步模式下直接返回的图片 URL */
   imageUrl?: string
+}
+
+export interface ImageLocalGenerationResponse {
+  localPath: string
+  imageUrl?: string
+  promptUsed?: string
 }
 
 export interface ImagePollResponse {

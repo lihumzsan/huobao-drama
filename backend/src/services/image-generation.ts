@@ -1,6 +1,6 @@
 import { db, schema } from '../db/index.js'
 import { eq } from 'drizzle-orm'
-import { getActiveConfig, getConfigById } from './ai.js'
+import { getImageConfigById } from './ai.js'
 import { now } from '../utils/response.js'
 import { downloadFile, readImageAsCompressedDataUrl, saveBase64Image } from '../utils/storage.js'
 import { getImageAdapter } from './adapters/registry'
@@ -22,10 +22,7 @@ interface GenerateImageParams {
 
 export async function generateImage(params: GenerateImageParams): Promise<number> {
   const ts = now()
-  const config = params.configId
-    ? getConfigById(params.configId)
-    : getActiveConfig('image')
-  if (!config) throw new Error('No active image AI config')
+  const config = getImageConfigById(params.configId)
 
   const res = db.insert(schema.imageGenerations).values({
     storyboardId: params.storyboardId,
@@ -85,16 +82,29 @@ async function processImageGeneration(id: number, config: AIConfig) {
       frameType: record.frameType,
     })
 
-    // 使用 Adapter 构建请求
     const resolvedReferenceImages = await normalizeReferenceImages(record.referenceImages)
-    const { url, method, headers, body } = await adapter.buildGenerateRequest(config, {
+    const adapterRecord = {
       id: record.id,
       model: record.model,
       prompt: record.prompt,
       size: record.size,
       frameType: record.frameType,
       referenceImages: resolvedReferenceImages ? JSON.stringify(resolvedReferenceImages) : null,
-    })
+    }
+
+    if (adapter.generateLocal) {
+      const localResult = await adapter.generateLocal(config, adapterRecord)
+      logTaskProgress('ImageTask', 'local-complete', {
+        id,
+        provider: config.provider,
+        localPath: localResult.localPath,
+      })
+      await handleImageCompleteLocal(id, config.provider, localResult.localPath, localResult.imageUrl)
+      return
+    }
+
+    // 使用 Adapter 构建请求
+    const { url, method, headers, body } = await adapter.buildGenerateRequest(config, adapterRecord)
     logTaskProgress('ImageTask', 'request', {
       id,
       provider: config.provider,
@@ -304,14 +314,18 @@ async function handleImageComplete(id: number, provider: string, imageUrl: strin
 
 async function handleImageCompleteBase64(id: number, provider: string, base64Data: string, mimeType: string) {
   const localPath = await saveBase64Image(base64Data, mimeType, 'images')
+  await handleImageCompleteLocal(id, provider, localPath)
+}
+
+async function handleImageCompleteLocal(id: number, provider: string, localPath: string, imageUrl?: string) {
   const rows = db.select().from(schema.imageGenerations).where(eq(schema.imageGenerations.id, id)).all()
   const record = rows[0]
 
   db.update(schema.imageGenerations)
-    .set({ localPath, status: 'completed', updatedAt: now() })
+    .set({ localPath, imageUrl: imageUrl || null, status: 'completed', updatedAt: now() })
     .where(eq(schema.imageGenerations.id, id))
     .run()
-  logTaskSuccess('ImageTask', 'saved-base64', { id, provider, mimeType, localPath })
+  logTaskSuccess('ImageTask', 'saved-local', { id, provider, localPath })
 
   // 更新关联表
   if (record?.storyboardId) {

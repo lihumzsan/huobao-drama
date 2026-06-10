@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 export type CodexReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 export interface CodexExecCommandOptions {
   schemaPath: string
@@ -12,6 +13,9 @@ export interface CodexExecCommandOptions {
   codexBin?: string
   model?: string
   reasoningEffort?: CodexReasoningEffort
+  sandbox?: CodexSandboxMode
+  images?: string[]
+  enabledFeatures?: string[]
 }
 
 export interface CodexRunOptions<T> {
@@ -21,6 +25,9 @@ export interface CodexRunOptions<T> {
   codexBin?: string
   model?: string
   reasoningEffort?: CodexReasoningEffort
+  sandbox?: CodexSandboxMode
+  images?: string[]
+  enabledFeatures?: string[]
   timeoutMs?: number
   validate?: (value: unknown) => T
 }
@@ -52,19 +59,24 @@ function resolveCodexBin(configuredBin?: string) {
 export function buildCodexExecCommand(options: CodexExecCommandOptions) {
   const model = options.model || DEFAULT_CODEX_MODEL
   const reasoningEffort = options.reasoningEffort || DEFAULT_REASONING_EFFORT
+  const sandbox = options.sandbox || 'read-only'
+  const imageArgs = (options.images || []).flatMap(image => ['--image', image])
+  const featureArgs = (options.enabledFeatures || []).flatMap(feature => ['--enable', feature])
   return {
     bin: resolveCodexBin(options.codexBin),
     args: [
       'exec',
       '--ephemeral',
+      ...featureArgs,
       '--sandbox',
-      'read-only',
+      sandbox,
       '--config',
       'approval_policy="never"',
       '--model',
       model,
       '--config',
       `model_reasoning_effort="${reasoningEffort}"`,
+      ...imageArgs,
       '--output-schema',
       options.schemaPath,
       '--output-last-message',
@@ -118,6 +130,9 @@ export async function runCodexCliJson<T = unknown>(options: CodexRunOptions<T>):
       codexBin: options.codexBin,
       model: options.model,
       reasoningEffort: options.reasoningEffort,
+      sandbox: options.sandbox,
+      images: options.images,
+      enabledFeatures: options.enabledFeatures,
     })
 
     const result = await runProcessQueued(command.bin, command.args, options.prompt, options.cwd, options.timeoutMs || DEFAULT_TIMEOUT_MS)

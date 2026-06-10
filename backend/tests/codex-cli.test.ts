@@ -51,6 +51,35 @@ test('uses the installed Windows Codex CLI before the WindowsApps alias', (t) =>
   }
 })
 
+test('can build a workspace-write Codex exec command with attached images', () => {
+  const command = buildCodexExecCommand({
+    ...baseOptions,
+    sandbox: 'workspace-write',
+    images: ['C:\\refs\\scene.png', 'C:\\refs\\character.png'],
+  })
+
+  assert.equal(command.args[command.args.indexOf('--sandbox') + 1], 'workspace-write')
+  assert.equal(command.args.filter(arg => arg === '--image').length, 2)
+  assert.deepEqual(command.args.slice(command.args.indexOf('--image'), command.args.indexOf('--image') + 4), [
+    '--image',
+    'C:\\refs\\scene.png',
+    '--image',
+    'C:\\refs\\character.png',
+  ])
+})
+
+test('can enable Codex CLI features for local image generation', () => {
+  const command = buildCodexExecCommand({
+    ...baseOptions,
+    enabledFeatures: ['image_generation'],
+  })
+
+  assert.deepEqual(command.args.slice(command.args.indexOf('--enable'), command.args.indexOf('--enable') + 2), [
+    '--enable',
+    'image_generation',
+  ])
+})
+
 test('serializes Codex CLI executions in one backend process', async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'huobao-codex-test-'))
   const fakeScript = path.join(tempDir, 'fake-codex.mjs')

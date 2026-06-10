@@ -770,7 +770,7 @@
             </div>
             <div class="asset-grid">
               <div v-for="c in visualChars" :key="c.id" class="card asset-card">
-                <div class="asset-cover">
+                <div class="asset-cover character-sheet-cover">
                   <img
                     v-if="c.image_url || c.imageUrl"
                     :src="'/' + (c.image_url || c.imageUrl)"
@@ -784,6 +784,7 @@
                 </div>
                 <div class="asset-body">
                   <div class="asset-name">{{ c.name }}</div>
+                  <div v-if="charImageJobText(c)" :class="['asset-job-status', charImageJobFailed(c) && 'is-error']">{{ charImageJobText(c) }}</div>
                   <div class="asset-meta dim">{{ c.role || '角色' }}</div>
                 </div>
                 <div class="asset-foot">
@@ -823,6 +824,7 @@
                 </div>
                 <div class="asset-body">
                   <div class="asset-name">{{ s.location }}</div>
+                  <div v-if="sceneImageJobText(s)" :class="['asset-job-status', sceneImageJobFailed(s) && 'is-error']">{{ sceneImageJobText(s) }}</div>
                   <div class="asset-meta dim">{{ s.time || '—' }}</div>
                 </div>
                 <div class="asset-foot">
@@ -1460,6 +1462,7 @@ import {
 } from 'lucide-vue-next'
 import { dramaAPI, episodeAPI, storyboardAPI, characterAPI, sceneAPI, imageAPI, videoAPI, composeAPI, mergeAPI, gridAPI, aiConfigAPI, voicesAPI, uploadAPI } from '~/composables/useApi'
 import { useAgent } from '~/composables/useAgent'
+import { formatImageGenerationJob, shouldPollImageGenerationJob } from '~/utils/imageGenerationStatus'
 import BaseSelect from '~/components/BaseSelect.vue'
 
 definePageMeta({ layout: 'studio' })
@@ -1518,6 +1521,9 @@ const videoConfigs = ref([])
 const audioConfigs = ref([])
 const pendingCharImageIds = ref([])
 const pendingSceneImageIds = ref([])
+const pendingCharImageJobs = ref({})
+const pendingSceneImageJobs = ref({})
+const generationStatusNow = ref(Date.now())
 const pendingShotFrameKeys = ref([])
 const pendingVideoIds = ref([])
 const pendingComposeIds = ref([])
@@ -1527,6 +1533,14 @@ const failedComposeMessages = ref({})
 const uploadedVoiceNames = ref({})
 const roleVoiceAccept = 'audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm'
 const imageViewer = ref({ open: false, src: '', title: '' })
+let generationStatusTimer = null
+const defaultCodexImageConfig = Object.freeze({
+  id: null,
+  name: '本机 Codex 图片',
+  provider: 'codex',
+  model: '["gpt-5.5"]',
+  is_active: true,
+})
 
 function configLabel(config) {
   if (!config) return '未配置'
@@ -1535,8 +1549,55 @@ function configLabel(config) {
   return modelName ? `${config.name} · ${modelName} (${config.provider})` : `${config.name} (${config.provider})`
 }
 
+function setImageGenerationJob(jobsRef, targetId, patch) {
+  const current = jobsRef.value[targetId] || { startedAt: Date.now(), status: 'pending' }
+  jobsRef.value = {
+    ...jobsRef.value,
+    [targetId]: {
+      ...current,
+      ...patch,
+      startedAt: patch.startedAt || current.startedAt || Date.now(),
+    },
+  }
+  generationStatusNow.value = Date.now()
+}
+
+function clearImageGenerationJob(jobsRef, pendingIdsRef, targetId) {
+  pendingIdsRef.value = pendingIdsRef.value.filter(id => id !== targetId)
+  const next = { ...jobsRef.value }
+  delete next[targetId]
+  jobsRef.value = next
+  generationStatusNow.value = Date.now()
+}
+
+function imageGenerationJobText(jobsRef, targetId) {
+  return formatImageGenerationJob(jobsRef.value[targetId], generationStatusNow.value)
+}
+
+function imageGenerationJobFailed(jobsRef, targetId) {
+  return jobsRef.value[targetId]?.status === 'failed'
+}
+
 function isPendingCharImage(id) {
+  const job = pendingCharImageJobs.value[id]
+  if (job) return shouldPollImageGenerationJob(job, generationStatusNow.value)
   return pendingCharImageIds.value.includes(id)
+}
+
+function charImageStatusLabel(char) {
+  if (char?.image_url || char?.imageUrl) return '已生成'
+  if (imageGenerationJobFailed(pendingCharImageJobs, char?.id)) return '失败'
+  if (isPendingCharImage(char?.id)) return '生成中'
+  return '待生成'
+}
+
+function charImageJobText(char) {
+  if (!char || char.image_url || char.imageUrl) return ''
+  return imageGenerationJobText(pendingCharImageJobs, char.id)
+}
+
+function charImageJobFailed(char) {
+  return imageGenerationJobFailed(pendingCharImageJobs, char?.id)
 }
 
 function openImageViewer(src, title = '') {
@@ -1554,14 +1615,36 @@ function handleImageViewerKeydown(event) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleImageViewerKeydown)
+  generationStatusTimer = window.setInterval(() => {
+    generationStatusNow.value = Date.now()
+  }, 10000)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleImageViewerKeydown)
+  if (generationStatusTimer) window.clearInterval(generationStatusTimer)
 })
 
 function isPendingSceneImage(id) {
+  const job = pendingSceneImageJobs.value[id]
+  if (job) return shouldPollImageGenerationJob(job, generationStatusNow.value)
   return pendingSceneImageIds.value.includes(id)
+}
+
+function sceneImageStatusLabel(scene) {
+  if (scene?.image_url || scene?.imageUrl) return '已生成'
+  if (imageGenerationJobFailed(pendingSceneImageJobs, scene?.id)) return '失败'
+  if (isPendingSceneImage(scene?.id)) return '生成中'
+  return '待生成'
+}
+
+function sceneImageJobText(scene) {
+  if (!scene || scene.image_url || scene.imageUrl) return ''
+  return imageGenerationJobText(pendingSceneImageJobs, scene.id)
+}
+
+function sceneImageJobFailed(scene) {
+  return imageGenerationJobFailed(pendingSceneImageJobs, scene?.id)
 }
 
 function framePendingKey(id, frameType) {
@@ -1785,8 +1868,12 @@ const effectiveAudioConfig = computed(() => {
   const locked = audioConfigs.value.find(c => c.id === lockedAudioConfigId.value)
   return isConfigActive(locked) ? locked : (audioConfigs.value.find(isConfigActive) || defaultComfyUiAudioConfig)
 })
+const effectiveImageConfig = computed(() => {
+  const locked = imageConfigs.value.find(c => c.id === lockedImageConfigId.value)
+  return isConfigActive(locked) ? locked : (imageConfigs.value.find(isConfigActive) || defaultCodexImageConfig)
+})
 const lockedAudioProvider = computed(() => effectiveAudioConfig.value?.provider || 'comfyui')
-const lockedImageConfigLabel = computed(() => configLabel(imageConfigs.value.find(c => c.id === lockedImageConfigId.value)))
+const lockedImageConfigLabel = computed(() => configLabel(effectiveImageConfig.value))
 const lockedVideoConfigLabel = computed(() => configLabel(videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)))
 const lockedAudioConfigLabel = computed(() => configLabel(effectiveAudioConfig.value))
 
@@ -2171,6 +2258,7 @@ async function startGridGen() {
     const res = await gridAPI.generate({
       storyboard_ids: ids,
       drama_id: dramaId,
+      episode_id: epId.value,
       rows,
       cols,
       mode: gridMode.value,
@@ -2769,7 +2857,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function watchAsyncResult(check, attempts = 24, delay = 2500) {
+function watchAsyncResult(check, attempts = 180, delay = 5000) {
   void (async () => {
     for (let i = 0; i < attempts; i++) {
       await sleep(delay)
@@ -2779,20 +2867,80 @@ function watchAsyncResult(check, attempts = 24, delay = 2500) {
   })()
 }
 
+function pollImageGenerationStatus({ jobsRef, pendingIdsRef, targetId, generationId, isDone, successMessage }) {
+  if (!generationId) return
+  void (async () => {
+    while (shouldPollImageGenerationJob(jobsRef.value[targetId], Date.now())) {
+      await sleep(5000)
+      generationStatusNow.value = Date.now()
+      try {
+        const record = await imageAPI.get(generationId)
+        const status = record?.status || 'processing'
+        setImageGenerationJob(jobsRef, targetId, {
+          generationId,
+          status,
+          lastCheckedAt: Date.now(),
+          error: record?.error_msg || record?.errorMsg || '',
+        })
+
+        if (status === 'completed') {
+          await refresh()
+          if (isDone()) {
+            clearImageGenerationJob(jobsRef, pendingIdsRef, targetId)
+            toast.success(successMessage)
+          }
+          return
+        }
+
+        if (status === 'failed') {
+          pendingIdsRef.value = pendingIdsRef.value.filter(id => id !== targetId)
+          toast.error(record?.error_msg || record?.errorMsg || '图片生成失败')
+          return
+        }
+      } catch (err) {
+        setImageGenerationJob(jobsRef, targetId, {
+          generationId,
+          status: 'processing',
+          lastCheckedAt: Date.now(),
+          error: err?.message || '',
+        })
+      }
+    }
+
+    pendingIdsRef.value = pendingIdsRef.value.filter(id => id !== targetId)
+    setImageGenerationJob(jobsRef, targetId, {
+      generationId,
+      status: 'failed',
+      lastCheckedAt: Date.now(),
+      error: '已等待超过15分钟，请刷新后重试或查看后端日志',
+    })
+  })()
+}
+
 async function genCharImg(id) {
   try {
     if (!isPendingCharImage(id)) pendingCharImageIds.value.push(id)
-    await characterAPI.generateImage(id, epId.value)
+    setImageGenerationJob(pendingCharImageJobs, id, { status: 'pending', startedAt: Date.now(), lastCheckedAt: Date.now() })
+    const res = await characterAPI.generateImage(id, epId.value)
+    setImageGenerationJob(pendingCharImageJobs, id, { generationId: res?.image_generation_id, status: 'processing', lastCheckedAt: Date.now() })
     toast.success('角色图片生成中')
     await refresh()
-    watchAsyncResult(() => {
+    const isDone = () => {
       const char = chars.value.find(c => c.id === id)
       const done = !!(char?.image_url || char?.imageUrl)
-      if (done) pendingCharImageIds.value = pendingCharImageIds.value.filter(item => item !== id)
+      if (done) clearImageGenerationJob(pendingCharImageJobs, pendingCharImageIds, id)
       return done
+    }
+    pollImageGenerationStatus({
+      jobsRef: pendingCharImageJobs,
+      pendingIdsRef: pendingCharImageIds,
+      targetId: id,
+      generationId: res?.image_generation_id,
+      isDone,
+      successMessage: '角色图片已生成',
     })
   } catch (e) {
-    pendingCharImageIds.value = pendingCharImageIds.value.filter(item => item !== id)
+    clearImageGenerationJob(pendingCharImageJobs, pendingCharImageIds, id)
     toast.error(e.message)
   }
 }
@@ -2800,34 +2948,58 @@ function batchCharImages() {
   const ids = visualChars.value.filter(c => !(c.image_url || c.imageUrl)).map(c => c.id)
   if (!ids.length) { toast.info('所有角色图片已生成'); return }
   pendingCharImageIds.value = [...new Set([...pendingCharImageIds.value, ...ids])]
-  characterAPI.batchImages(ids, epId.value).then(async () => {
+  ids.forEach(id => setImageGenerationJob(pendingCharImageJobs, id, { status: 'pending', startedAt: Date.now(), lastCheckedAt: Date.now() }))
+  characterAPI.batchImages(ids, epId.value).then(async (res) => {
     toast.success('角色图片批量生成中')
     await refresh()
-    watchAsyncResult(() => ids.every(id => {
-      const char = chars.value.find(c => c.id === id)
-      const done = !!(char?.image_url || char?.imageUrl)
-      if (done) pendingCharImageIds.value = pendingCharImageIds.value.filter(item => item !== id)
-      return done
-    }), 36)
+    const generationIds = Array.isArray(res?.ids) ? res.ids : []
+    ids.forEach((id, index) => {
+      const generationId = generationIds[index]
+      setImageGenerationJob(pendingCharImageJobs, id, { generationId, status: 'processing', lastCheckedAt: Date.now() })
+      pollImageGenerationStatus({
+        jobsRef: pendingCharImageJobs,
+        pendingIdsRef: pendingCharImageIds,
+        targetId: id,
+        generationId,
+        isDone: () => {
+          const char = chars.value.find(c => c.id === id)
+          const done = !!(char?.image_url || char?.imageUrl)
+          if (done) clearImageGenerationJob(pendingCharImageJobs, pendingCharImageIds, id)
+          return done
+        },
+        successMessage: '角色图片已生成',
+      })
+    })
   }).catch(e => {
     pendingCharImageIds.value = pendingCharImageIds.value.filter(item => !ids.includes(item))
+    ids.forEach(id => clearImageGenerationJob(pendingCharImageJobs, pendingCharImageIds, id))
     toast.error(e.message)
   })
 }
 async function genSceneImg(id) {
   try {
     if (!isPendingSceneImage(id)) pendingSceneImageIds.value.push(id)
-    await sceneAPI.generateImage(id, epId.value)
+    setImageGenerationJob(pendingSceneImageJobs, id, { status: 'pending', startedAt: Date.now(), lastCheckedAt: Date.now() })
+    const res = await sceneAPI.generateImage(id, epId.value)
+    setImageGenerationJob(pendingSceneImageJobs, id, { generationId: res?.image_generation_id, status: 'processing', lastCheckedAt: Date.now() })
     toast.success('场景图片生成中')
     await refresh()
-    watchAsyncResult(() => {
+    const isDone = () => {
       const scene = scenes.value.find(s => s.id === id)
       const done = !!(scene?.image_url || scene?.imageUrl)
-      if (done) pendingSceneImageIds.value = pendingSceneImageIds.value.filter(item => item !== id)
+      if (done) clearImageGenerationJob(pendingSceneImageJobs, pendingSceneImageIds, id)
       return done
+    }
+    pollImageGenerationStatus({
+      jobsRef: pendingSceneImageJobs,
+      pendingIdsRef: pendingSceneImageIds,
+      targetId: id,
+      generationId: res?.image_generation_id,
+      isDone,
+      successMessage: '场景图片已生成',
     })
   } catch (e) {
-    pendingSceneImageIds.value = pendingSceneImageIds.value.filter(item => item !== id)
+    clearImageGenerationJob(pendingSceneImageJobs, pendingSceneImageIds, id)
     toast.error(e.message)
   }
 }
@@ -2835,7 +3007,29 @@ function batchSceneImages() {
   const ids = scenes.value.filter(s => !(s.image_url || s.imageUrl)).map(s => s.id)
   if (!ids.length) { toast.info('所有场景图片已生成'); return }
   pendingSceneImageIds.value = [...new Set([...pendingSceneImageIds.value, ...ids])]
-  ids.forEach(id => { sceneAPI.generateImage(id, epId.value).then(() => refresh()).catch(e => toast.error(e.message)) })
+  ids.forEach(id => {
+    setImageGenerationJob(pendingSceneImageJobs, id, { status: 'pending', startedAt: Date.now(), lastCheckedAt: Date.now() })
+    sceneAPI.generateImage(id, epId.value).then((res) => {
+      setImageGenerationJob(pendingSceneImageJobs, id, { generationId: res?.image_generation_id, status: 'processing', lastCheckedAt: Date.now() })
+      pollImageGenerationStatus({
+        jobsRef: pendingSceneImageJobs,
+        pendingIdsRef: pendingSceneImageIds,
+        targetId: id,
+        generationId: res?.image_generation_id,
+        isDone: () => {
+          const scene = scenes.value.find(s => s.id === id)
+          const done = !!(scene?.image_url || scene?.imageUrl)
+          if (done) clearImageGenerationJob(pendingSceneImageJobs, pendingSceneImageIds, id)
+          return done
+        },
+        successMessage: '场景图片已生成',
+      })
+      return refresh()
+    }).catch(e => {
+      clearImageGenerationJob(pendingSceneImageJobs, pendingSceneImageIds, id)
+      toast.error(e.message)
+    })
+  })
   toast.success('场景图片批量生成中')
   watchAsyncResult(() => ids.every(id => {
     const scene = scenes.value.find(s => s.id === id)
@@ -3949,6 +4143,7 @@ onMounted(() => { refresh(); loadConfigs(); loadVoices() })
 .asset-cover { position: relative; aspect-ratio: 1; background: var(--bg-2); overflow: hidden; }
 .asset-cover.wide { aspect-ratio: 16/9; }
 .asset-cover img { width: 100%; height: 100%; object-fit: cover; }
+.character-sheet-cover img { object-fit: contain; background: #fff; }
 .previewable-image { cursor: zoom-in; transition: transform 0.18s var(--ease-out), filter 0.18s var(--ease-out); }
 .previewable-image:hover { transform: scale(1.015); filter: saturate(1.04); }
 .asset-cover-badge {
@@ -3974,6 +4169,14 @@ onMounted(() => { refresh(); loadConfigs(); loadVoices() })
 .asset-body { padding: 8px 10px; }
 .asset-name { font-size: 13px; font-weight: 600; }
 .asset-meta { font-size: 11px; }
+.asset-job-status {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--accent);
+  word-break: break-word;
+}
+.asset-job-status.is-error { color: var(--error); }
 .asset-foot { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-top: 1px solid var(--border); }
 
 /* Frame grid */

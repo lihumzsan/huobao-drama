@@ -502,6 +502,7 @@ app.post('/generate', async (c) => {
     cols,
     mode = 'first_frame', // first_frame | first_last | multi_ref
     custom_prompt,
+    episode_id,
   } = body
 
   if (!storyboard_ids?.length) return badRequest(c, 'storyboard_ids required')
@@ -513,6 +514,14 @@ app.post('/generate', async (c) => {
   }).filter(Boolean)
 
   if (!storyboards.length) return badRequest(c, 'No storyboards found')
+
+  const storyboardEpisodeId = storyboards.find((sb: any) => sb?.episodeId)?.episodeId
+  const episodeId = Number(storyboardEpisodeId || episode_id || 0)
+  let imageConfigId: number | undefined
+  if (episodeId) {
+    const [episode] = db.select().from(schema.episodes).where(eq(schema.episodes.id, episodeId)).all()
+    if (episode?.imageConfigId != null) imageConfigId = episode.imageConfigId
+  }
 
   // Get drama style
   let dramaStyle = ''
@@ -538,6 +547,7 @@ app.post('/generate', async (c) => {
       size,
       frameType: `grid_${mode}_${actualRows}x${actualCols}`,
       referenceImages,
+      configId: imageConfigId,
     })
 
     logTaskProgress('GridGenerate', 'reference-images', {
@@ -546,6 +556,8 @@ app.post('/generate', async (c) => {
       rows: actualRows,
       cols: actualCols,
       referenceCount: referenceImages.length,
+      episodeId,
+      imageConfigId,
     })
 
     return success(c, {
