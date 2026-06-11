@@ -4,6 +4,7 @@ import { db, schema } from '../db/index.js'
 import { success, created, now, badRequest } from '../utils/response.js'
 import { toSnakeCase } from '../utils/transform.js'
 import { generateTTS } from '../services/tts-generation.js'
+import { isNarratorSpeaker, parseDialogueForTTS as parseDialogueForTTSShared } from '../services/tts-dialogue.js'
 import { logTaskError, logTaskPayload, logTaskProgress, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
 const app = new Hono()
@@ -156,7 +157,7 @@ app.post('/:id/generate-tts', async (c) => {
   const id = Number(c.req.param('id'))
   const [sb] = db.select().from(schema.storyboards).where(eq(schema.storyboards.id, id)).all()
   if (!sb) return badRequest(c, '镜头不存在')
-  const parsedDialogue = parseDialogueForTTS(sb.dialogue)
+  const parsedDialogue = parseDialogueForTTSShared(sb.dialogue)
   if (parsedDialogue.ignorable) return badRequest(c, '该镜头没有可生成的对白或旁白')
   logTaskStart('StoryboardAPI', 'generate-tts', {
     storyboardId: id,
@@ -187,8 +188,20 @@ app.post('/:id/generate-tts', async (c) => {
   if (!pureDialogue) return badRequest(c, '未提取到可合成的文本')
 
   const [ep] = db.select().from(schema.episodes).where(eq(schema.episodes.id, sb.episodeId)).all()
+  const chars = ep ? db.select().from(schema.characters).where(eq(schema.characters.dramaId, ep.dramaId)).all() : []
+  const ttsSpeakers = parsedDialogue.turns.map((turn) => {
+    const found = turn.speaker && !isNarratorSpeaker(turn.speaker)
+      ? chars.find(char => char.name === turn.speaker)
+      : null
+    return {
+      speaker: turn.speaker,
+      text: turn.text,
+      voice: found?.voiceStyle || 'alloy',
+    }
+  })
+  voiceId = ttsSpeakers[0]?.voice || voiceId
   try {
-    const audioPath = await generateTTS({ text: pureDialogue, voice: voiceId, configId: ep?.audioConfigId || null })
+    const audioPath = await generateTTS({ text: pureDialogue, voice: voiceId, speakers: ttsSpeakers, configId: ep?.audioConfigId || null })
   db.update(schema.storyboards)
     .set({ ttsAudioUrl: audioPath, updatedAt: now() })
     .where(eq(schema.storyboards.id, id))

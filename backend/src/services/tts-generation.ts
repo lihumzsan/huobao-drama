@@ -16,6 +16,7 @@ const STORAGE_ROOT = process.env.STORAGE_PATH || path.resolve(__dirname, '../../
 interface TTSParams {
   text: string
   voice: string
+  speakers?: Array<{ speaker: string; text: string; voice?: string }>
   model?: string
   speed?: number
   emotion?: string

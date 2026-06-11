@@ -32,13 +32,28 @@ type ResolveAudioWorkflowParams = {
   workflowKey: string
   text: string
   referenceAudioFilename?: string
+  referenceAudioFilenames?: string[]
   modelPath?: string | null
 }
 
 type SelectAudioWorkflowParams = {
   text: string
   voice?: string | null
+  voices?: Array<string | null | undefined>
+  speakerCount?: number
   model?: string | null
+}
+
+type TTSMultiSpeakerLine = {
+  speaker?: string
+  text?: string
+  voice?: string | null
+}
+
+type NormalizedSpeakerLine = {
+  speaker: string
+  text: string
+  voice?: string
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -48,6 +63,9 @@ const WORKFLOW_ROOT = path.join(PROJECT_ROOT, 'configs', 'comfyui', 'workflows')
 const PURE_TEXT_WORKFLOW = 'baseaudio/音色/s2-se'
 const FISHS2_SINGLE_CLONE_WORKFLOW = 'baseaudio/单人/s2-one'
 const LONGCAT_SINGLE_CLONE_WORKFLOW = 'baseaudio/单人/LongCat-one'
+const FISHS2_TWO_CLONE_WORKFLOW = 'baseaudio/\u591a\u4eba/s2-two'
+const LONGCAT_TWO_CLONE_WORKFLOW = 'baseaudio/\u591a\u4eba/LongCat-two'
+const FISHS2_THREE_CLONE_WORKFLOW = 'baseaudio/\u4e09\u4eba/s2-three'
 const AUDIO_EXTENSIONS = new Set(['.aac', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.webm'])
 const OUTPUT_NODE_TYPES = new Set(['saveaudio', 'saveaudiomp3', 'saveaudioopus', 'previewaudio'])
 const SEED_CONTROL_VALUES = new Set(['fixed', 'randomize', 'increment', 'decrement'])
@@ -61,18 +79,33 @@ export class ComfyUiTTSAdapter implements TTSProviderAdapter {
   async generateAudio(config: AIConfig, params: any): Promise<TTSGeneratedAudio> {
     const voice = String(params.voice || '').trim()
     const model = params.model || config.model || ''
+    const speakerLines = normalizeSpeakerLines(params.speakers)
+    const speakerVoices = collectSpeakerVoices(speakerLines)
+    const multiSpeakerVoices = speakerVoices.map(item => item.voice).filter((item): item is string => !!item)
+    const useMultiSpeakerWorkflow = speakerLines.length >= 2
+      && speakerVoices.length >= 2
+      && speakerVoices.length <= 3
+      && multiSpeakerVoices.length === speakerVoices.length
+      && multiSpeakerVoices.every(isReferenceAudioSource)
+    const text = useMultiSpeakerWorkflow ? formatComfyUiSpeakerText(speakerLines) : String(params.text || '')
     const workflowKey = selectComfyUiAudioWorkflow({
-      text: params.text,
+      text,
       voice,
+      voices: useMultiSpeakerWorkflow ? multiSpeakerVoices : undefined,
+      speakerCount: useMultiSpeakerWorkflow ? speakerVoices.length : undefined,
       model,
     })
-    const referenceAudioFilename = isReferenceAudioSource(voice)
-      ? await resolveReferenceAudioFilename(config.baseUrl, voice)
-      : undefined
+    const referenceSources = useMultiSpeakerWorkflow
+      ? multiSpeakerVoices
+      : (isReferenceAudioSource(voice) ? [voice] : [])
+    const referenceAudioFilenames = await Promise.all(
+      referenceSources.map(source => resolveReferenceAudioFilename(config.baseUrl, source)),
+    )
     const workflow = resolveComfyUiAudioWorkflow({
       workflowKey,
-      text: params.text || '',
-      referenceAudioFilename,
+      text,
+      referenceAudioFilename: referenceAudioFilenames[0],
+      referenceAudioFilenames,
       modelPath: model,
     })
 
@@ -97,9 +130,22 @@ export function selectComfyUiAudioWorkflow(params: SelectAudioWorkflowParams): s
   const model = String(params.model || '').trim()
   if (model.startsWith('baseaudio/')) return stripJsonSuffix(model)
 
+  const speakerCount = Number(params.speakerCount || params.voices?.length || 0)
+  const voices = (params.voices || []).slice(0, speakerCount)
+  const hasMultiSpeakerReferences = speakerCount >= 2
+    && speakerCount <= 3
+    && voices.length === speakerCount
+    && voices.every(isReferenceAudioSource)
+  const normalizedModel = model.toLowerCase()
+
+  if (hasMultiSpeakerReferences) {
+    if (speakerCount >= 3) return FISHS2_THREE_CLONE_WORKFLOW
+    if (normalizedModel.includes('s2') || normalizedModel.includes('fish')) return FISHS2_TWO_CLONE_WORKFLOW
+    return LONGCAT_TWO_CLONE_WORKFLOW
+  }
+
   if (!isReferenceAudioSource(params.voice)) return PURE_TEXT_WORKFLOW
 
-  const normalizedModel = model.toLowerCase()
   if (normalizedModel.includes('s2') || normalizedModel.includes('fish')) {
     return FISHS2_SINGLE_CLONE_WORKFLOW
   }
@@ -109,7 +155,10 @@ export function selectComfyUiAudioWorkflow(params: SelectAudioWorkflowParams): s
 export function resolveComfyUiAudioWorkflow(params: ResolveAudioWorkflowParams): WorkflowGraph {
   const graph = readWorkflowGraph(params.workflowKey)
   applyTargetTextInjection(graph, params.text)
-  if (params.referenceAudioFilename) applyReferenceAudioInjection(graph, params.referenceAudioFilename)
+  const referenceAudioFilenames = params.referenceAudioFilenames?.length
+    ? params.referenceAudioFilenames
+    : (params.referenceAudioFilename ? [params.referenceAudioFilename] : [])
+  if (referenceAudioFilenames.length) applyReferenceAudioInjection(graph, referenceAudioFilenames)
   applyModelPathInjection(graph, params.modelPath || '')
   pruneUnreachableFromOutputs(graph)
   assignRandomSeeds(graph)
@@ -274,16 +323,55 @@ function applyTargetTextInjection(graph: WorkflowGraph, text: string): void {
   }
 }
 
-function applyReferenceAudioInjection(graph: WorkflowGraph, referenceAudioFilename: string): void {
+function applyReferenceAudioInjection(graph: WorkflowGraph, referenceAudioFilenames: string[]): void {
+  const filenames = referenceAudioFilenames.map(item => String(item || '').trim()).filter(Boolean)
+  if (!filenames.length) return
+
+  const referenceNodeIds = findReferenceAudioNodeIds(graph)
+  if (referenceNodeIds.length) {
+    referenceNodeIds.forEach((nodeId, index) => {
+      const node = graph[nodeId]
+      if (node) setLoadAudioFilename(node, filenames[Math.min(index, filenames.length - 1)])
+    })
+    return
+  }
+
   const loadAudioNodes = Object.entries(graph)
     .filter(([, node]) => normalizeNodeType(node.class_type) === 'loadaudio')
     .sort(([left], [right]) => Number(left) - Number(right))
-  for (const [, node] of loadAudioNodes) {
-    node.inputs.audio = referenceAudioFilename
-    delete node.inputs.upload
-    delete node.inputs.audioUI
-    delete node.inputs.audioui
+  loadAudioNodes.forEach(([, node], index) => {
+    setLoadAudioFilename(node, filenames[Math.min(index, filenames.length - 1)])
+  })
+}
+
+function findReferenceAudioNodeIds(graph: WorkflowGraph): string[] {
+  const nodeIds: string[] = []
+
+  for (const node of Object.values(graph)) {
+    const speakerAudioInputs = Object.entries(node.inputs)
+      .map(([inputName, value]) => {
+        const match = inputName.match(/^num_speakers\.speaker_(\d+)_audio$/)
+        return match && isConnectionValue(value) ? { speakerIndex: Number(match[1]), value } : null
+      })
+      .filter((item): item is { speakerIndex: number; value: [string, number] } => !!item)
+      .sort((left, right) => left.speakerIndex - right.speakerIndex)
+
+    for (const item of speakerAudioInputs) {
+      nodeIds.push(String(item.value[0]))
+    }
+
+    const referenceAudio = node.inputs.reference_audio
+    if (isConnectionValue(referenceAudio)) nodeIds.push(String(referenceAudio[0]))
   }
+
+  return [...new Set(nodeIds)]
+}
+
+function setLoadAudioFilename(node: WorkflowNode, filename: string): void {
+  node.inputs.audio = filename
+  delete node.inputs.upload
+  delete node.inputs.audioUI
+  delete node.inputs.audioui
 }
 
 function applyModelPathInjection(graph: WorkflowGraph, modelPath: string): void {
@@ -357,6 +445,55 @@ function setStringValueOnNode(node: WorkflowNode, value: string): void {
 function isTtsNode(node: WorkflowNode): boolean {
   const classType = node.class_type.toLowerCase()
   return classType.includes('tts')
+}
+
+function normalizeSpeakerLines(value: unknown): NormalizedSpeakerLine[] {
+  if (!Array.isArray(value)) return []
+  const lines: NormalizedSpeakerLine[] = []
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const line = item as TTSMultiSpeakerLine
+    const text = String(line.text || '').trim()
+    const voice = String(line.voice || '').trim()
+    if (!text) continue
+    lines.push({
+      speaker: String(line.speaker || '').trim(),
+      text,
+      ...(voice ? { voice } : {}),
+    })
+  }
+
+  return lines
+}
+
+function collectSpeakerVoices(lines: NormalizedSpeakerLine[]): Array<{ key: string; voice?: string }> {
+  const speakers = new Map<string, { key: string; voice?: string }>()
+  lines.forEach((line, index) => {
+    const key = getSpeakerKey(line, index)
+    if (!speakers.has(key)) speakers.set(key, { key, voice: line.voice || undefined })
+  })
+  return [...speakers.values()]
+}
+
+function formatComfyUiSpeakerText(lines: NormalizedSpeakerLine[]): string {
+  const speakerIndexes = new Map<string, number>()
+  let nextSpeakerIndex = 1
+
+  return lines.map((line, index) => {
+    const speakerKey = getSpeakerKey(line, index)
+    let speakerIndex = speakerIndexes.get(speakerKey)
+    if (!speakerIndex) {
+      speakerIndex = nextSpeakerIndex
+      speakerIndexes.set(speakerKey, speakerIndex)
+      nextSpeakerIndex += 1
+    }
+    return `[speaker_${speakerIndex}]: ${line.text}`
+  }).join('\n')
+}
+
+function getSpeakerKey(line: TTSMultiSpeakerLine, index: number): string {
+  return line.speaker || line.voice || `speaker_${index + 1}`
 }
 
 function isReferenceAudioSource(value: unknown): boolean {

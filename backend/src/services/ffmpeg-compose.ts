@@ -11,6 +11,7 @@ import { db, schema } from '../db/index.js'
 import { eq } from 'drizzle-orm'
 import { now } from '../utils/response.js'
 import { generateTTS } from './tts-generation.js'
+import { isNarratorSpeaker, parseDialogueForTTS as parseDialogueForTTSShared } from './tts-dialogue.js'
 import { logTaskError, logTaskProgress, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -68,7 +69,7 @@ export async function composeStoryboard(storyboardId: number): Promise<string> {
   const videoPath = toAbsPath(sb.videoUrl)
   let audioPath: string | null = null
   let subtitlePath: string | null = null
-  const parsedDialogue = parseDialogueForTTS(sb.dialogue)
+  const parsedDialogue = parseDialogueForTTSShared(sb.dialogue)
 
   // 1. 生成 TTS 音频（如果有对白）
   try {
@@ -92,11 +93,25 @@ export async function composeStoryboard(storyboardId: number): Promise<string> {
             if (found?.voiceStyle) voiceId = found.voiceStyle
           }
         }
+        const chars = ep
+          ? db.select().from(schema.characters).where(eq(schema.characters.dramaId, ep.dramaId)).all()
+          : []
+        const ttsSpeakers = parsedDialogue.turns.map((turn) => {
+          const found = turn.speaker && !isNarratorSpeaker(turn.speaker)
+            ? chars.find(char => char.name === turn.speaker)
+            : null
+          return {
+            speaker: turn.speaker,
+            text: turn.text,
+            voice: found?.voiceStyle || 'alloy',
+          }
+        })
+        voiceId = ttsSpeakers[0]?.voice || voiceId
 
         const pureDialogue = parsedDialogue.pureText
         if (pureDialogue) {
           logTaskProgress('ComposeTask', 'generate-inline-tts', { storyboardId, voiceId, textPreview: pureDialogue.slice(0, 40) })
-          const ttsPath = await generateTTS({ text: pureDialogue, voice: voiceId, configId: ep?.audioConfigId ?? undefined })
+          const ttsPath = await generateTTS({ text: pureDialogue, voice: voiceId, speakers: ttsSpeakers, configId: ep?.audioConfigId ?? undefined })
           audioPath = toAbsPath(ttsPath)
           db.update(schema.storyboards).set({ ttsAudioUrl: ttsPath, updatedAt: now() })
             .where(eq(schema.storyboards.id, storyboardId)).run()
