@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { now } from '../utils/response.js'
 import { runCodexCliJson } from './codex-cli.js'
+import { buildSceneStoragePrompt } from './scene-image-prompt.js'
 
 export type LocalCodexAgentType =
   | 'script_rewriter'
@@ -408,6 +409,10 @@ async function runExtractor(options: RunLocalCodexAgentOptions): Promise<LocalCo
     .filter(s => !s.deletedAt)
 
   const prompt = buildPrompt('extractor', [
+    'Scene prompt requirement: every scene.prompt must be an English pure background image prompt for location asset generation.',
+    'Scene prompts must describe only environment, architecture, furniture, props, lighting, weather, atmosphere, and time of day.',
+    'Scene prompts must not include people, character names, doctors, patients, actors, body parts, poses, dialogue, plot action, or portraits.',
+    'If the script scene contains people or action, ignore them in scene.prompt and keep only the empty environment.',
     '你是制片助理。请从当前集剧本中提取角色和场景，并与已有数据去重。',
     `用户要求：${options.message}`,
     '角色按 name 精确匹配；场景按 location + time 精确匹配。',
@@ -592,7 +597,7 @@ function saveExtractedScenes(db: any, schema: any, episodeId: number, dramaId: n
         dramaId,
         location: scene.location,
         time: scene.time || '',
-        prompt: scene.prompt || scene.location,
+        prompt: buildSceneStoragePrompt(scene),
         createdAt: ts,
         updatedAt: ts,
       }).run()

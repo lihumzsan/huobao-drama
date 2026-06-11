@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { db, schema } from '../db/index.js'
 import { success, created, badRequest, now } from '../utils/response.js'
 import { generateImage } from '../services/image-generation.js'
+import { buildSceneImagePrompt, buildSceneStoragePrompt } from '../services/scene-image-prompt.js'
 import { logTaskError, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
 const app = new Hono()
@@ -11,12 +12,17 @@ const app = new Hono()
 app.post('/', async (c) => {
   const body = await c.req.json()
   const ts = now()
+  const prompt = buildSceneStoragePrompt({
+    location: body.location,
+    time: body.time || '',
+    prompt: body.prompt || body.location,
+  })
   const res = db.insert(schema.scenes).values({
     dramaId: body.drama_id,
     episodeId: body.episode_id,
     location: body.location,
     time: body.time || '',
-    prompt: body.prompt || body.location,
+    prompt,
     createdAt: ts,
     updatedAt: ts,
   }).run()
@@ -30,9 +36,23 @@ app.put('/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.json()
   const updates: Record<string, any> = { updatedAt: now() }
+  const shouldRefreshPrompt = body.location !== undefined || body.time !== undefined || body.prompt !== undefined
+  let sceneForPrompt: any = null
+  if (shouldRefreshPrompt) {
+    const [scene] = db.select().from(schema.scenes).where(eq(schema.scenes.id, id)).all()
+    if (!scene) return badRequest(c, 'Scene not found')
+    sceneForPrompt = scene
+  }
+
   if (body.location !== undefined) updates.location = body.location
   if (body.time !== undefined) updates.time = body.time
-  if (body.prompt !== undefined) updates.prompt = body.prompt
+  if (shouldRefreshPrompt) {
+    updates.prompt = buildSceneStoragePrompt({
+      location: body.location !== undefined ? body.location : sceneForPrompt.location,
+      time: body.time !== undefined ? body.time : sceneForPrompt.time,
+      prompt: body.prompt !== undefined ? body.prompt : sceneForPrompt.prompt,
+    })
+  }
   db.update(schema.scenes).set(updates).where(eq(schema.scenes.id, id)).run()
   return success(c)
 })
@@ -47,7 +67,7 @@ app.post('/:id/generate-image', async (c) => {
   const [ep] = db.select().from(schema.episodes).where(eq(schema.episodes.id, Number(body.episode_id))).all()
   if (!ep) return badRequest(c, 'Episode not found')
 
-  const prompt = scene.prompt || `${scene.location}, ${scene.time || ''}, 高质量场景, 电影感`
+  const prompt = buildSceneImagePrompt(scene)
   try {
     logTaskStart('SceneImage', 'generate', { sceneId: id, episodeId: ep.id, dramaId: scene.dramaId, location: scene.location })
     db.update(schema.scenes).set({ status: 'processing', updatedAt: now() }).where(eq(schema.scenes.id, id)).run()

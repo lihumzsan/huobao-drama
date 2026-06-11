@@ -13,6 +13,7 @@ import { db, schema } from '../../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import { now } from '../../utils/response.js'
 import { logTaskProgress, logTaskSuccess } from '../../utils/task-logger.js'
+import { buildSceneStoragePrompt } from '../../services/scene-image-prompt.js'
 
 // ─── 关联辅助 ────────────────────────────────────────────────
 function linkCharToEpisode(episodeId: number, characterId: number) {
@@ -219,7 +220,7 @@ export function createExtractTools(episodeId: number, dramaId: number) {
             dramaId,
             location: scene.location,
             time: scene.time || '',
-            prompt: scene.prompt || scene.location,
+            prompt: buildSceneStoragePrompt(scene),
             createdAt: ts,
             updatedAt: ts,
           }).run()
