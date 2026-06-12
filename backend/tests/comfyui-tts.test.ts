@@ -112,6 +112,38 @@ test('resolves multi speaker FishS2 workflow with per-speaker reference audio in
   assert.equal(graph[(tts.inputs['num_speakers.speaker_3_audio'] as [string, number])[0]].inputs.audio, 'wang.wav')
 })
 
+test('shortens FishS2 multi speaker pause after each speaker turn', () => {
+  for (const workflowKey of ['baseaudio/\u591a\u4eba/s2-two', 'baseaudio/\u4e09\u4eba/s2-three']) {
+    const graph = resolveComfyUiAudioWorkflow({
+      workflowKey,
+      text: '[speaker_1]: A\n[speaker_2]: B\n[speaker_3]: C',
+      referenceAudioFilenames: ['liu.wav', 'chen.wav', 'wang.wav'],
+      modelPath: 's2-pro-bnb-nf4',
+    } as any)
+
+    const tts = Object.values(graph).find(node => node.class_type === 'FishS2MultiSpeakerTTS')
+    assert.ok(tts, `${workflowKey} should include FishS2MultiSpeakerTTS`)
+    assert.equal(tts.inputs.pause_after_speaker, 0.25)
+  }
+})
+
+test('sanitizes ComfyUI audio output filename prefixes for Windows paths', () => {
+  const graph = resolveComfyUiAudioWorkflow({
+    workflowKey: 'baseaudio/\u591a\u4eba/s2-two',
+    text: '[speaker_1]: A\n[speaker_2]: B',
+    referenceAudioFilenames: ['liu.wav', 'chen.wav'],
+    modelPath: 's2-pro-bnb-nf4',
+  } as any)
+
+  const saveAudioNodes = Object.values(graph).filter(node => String(node.class_type).toLowerCase().includes('saveaudio'))
+  assert.ok(saveAudioNodes.length, 'SaveAudio node should exist')
+  for (const node of saveAudioNodes) {
+    const filenamePrefix = String(node.inputs.filename_prefix || '')
+    assert.notEqual(filenamePrefix, '%date:yyyy-MM-dd%/VX-paolaoshiAICG_')
+    assert.doesNotMatch(filenamePrefix, /[<>:"\\|?*\x00-\x1F]/)
+  }
+})
+
 test('generates multi speaker ComfyUI prompts with uploaded reference audio per speaker', async () => {
   const originalFetch = globalThis.fetch
   let uploadCount = 0
@@ -131,7 +163,7 @@ test('generates multi speaker ComfyUI prompts with uploaded reference audio per 
     if (url === 'http://127.0.0.1:8188/prompt') {
       promptPosted = true
       const body = JSON.parse(String(init?.body || '{}'))
-      assert.ok(containsValue(body.prompt, '[speaker_1]: first line\n[speaker_2]: second line'))
+      assert.ok(containsValue(body.prompt, '[speaker_1]: first line\n\n[speaker_2]: second line'))
       assert.ok(containsValue(body.prompt, 'liu.wav'))
       assert.ok(containsValue(body.prompt, 'chen.wav'))
       return new Response(JSON.stringify({ prompt_id: 'prompt-1' }), {

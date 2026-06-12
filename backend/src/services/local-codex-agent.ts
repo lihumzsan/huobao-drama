@@ -15,6 +15,7 @@ export type LocalCodexAgentType =
 
 export const LOCAL_CODEX_MODEL = 'gpt-5.5'
 export const LOCAL_CODEX_REASONING_EFFORT = 'xhigh'
+export const LOCAL_CODEX_SERVICE_TIER = 'fast'
 export const LOCAL_CODEX_PROVIDER = 'codex'
 export const LOCAL_CODEX_CONFIG_ID = 'local-codex'
 
@@ -33,6 +34,7 @@ export const LOCAL_CODEX_VIRTUAL_CONFIG = {
   settings: {
     backend: 'codex_cli',
     reasoning_effort: LOCAL_CODEX_REASONING_EFFORT,
+    service_tier: LOCAL_CODEX_SERVICE_TIER,
     timeout_seconds: 900,
   },
 } as const
@@ -538,7 +540,7 @@ function agentResult(agentType: LocalCodexAgentType, text: string, payload: unkn
   return {
     type: 'done',
     text,
-    toolCalls: [{ toolName: 'local_codex_generate', args: { agentType, model: LOCAL_CODEX_MODEL, reasoning_effort: LOCAL_CODEX_REASONING_EFFORT } }],
+    toolCalls: [{ toolName: 'local_codex_generate', args: { agentType, model: LOCAL_CODEX_MODEL, reasoning_effort: LOCAL_CODEX_REASONING_EFFORT, service_tier: LOCAL_CODEX_SERVICE_TIER } }],
     toolResults: [{ toolName: 'local_codex_apply', result: JSON.stringify(payload) }],
   }
 }

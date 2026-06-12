@@ -67,6 +67,7 @@ export class CodexImageAdapter implements ImageProviderAdapter {
         schema: CODEX_IMAGE_SCHEMA,
         model: record.model || config.model || 'gpt-5.5',
         reasoningEffort: 'xhigh',
+        serviceTier: 'fast',
         sandbox: 'danger-full-access',
         enabledFeatures: ['image_generation'],
         images: referencePaths,

@@ -6,6 +6,7 @@ import path from 'node:path'
 
 export type CodexReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type CodexServiceTier = string
 
 export interface CodexExecCommandOptions {
   schemaPath: string
@@ -13,6 +14,7 @@ export interface CodexExecCommandOptions {
   codexBin?: string
   model?: string
   reasoningEffort?: CodexReasoningEffort
+  serviceTier?: CodexServiceTier
   sandbox?: CodexSandboxMode
   images?: string[]
   enabledFeatures?: string[]
@@ -25,6 +27,7 @@ export interface CodexRunOptions<T> {
   codexBin?: string
   model?: string
   reasoningEffort?: CodexReasoningEffort
+  serviceTier?: CodexServiceTier
   sandbox?: CodexSandboxMode
   images?: string[]
   enabledFeatures?: string[]
@@ -41,6 +44,7 @@ export interface CodexProcessResult {
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5'
 const DEFAULT_REASONING_EFFORT: CodexReasoningEffort = 'xhigh'
+const DEFAULT_SERVICE_TIER: CodexServiceTier = 'fast'
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
 let codexProcessQueue: Promise<void> = Promise.resolve()
 
@@ -59,6 +63,7 @@ function resolveCodexBin(configuredBin?: string) {
 export function buildCodexExecCommand(options: CodexExecCommandOptions) {
   const model = options.model || DEFAULT_CODEX_MODEL
   const reasoningEffort = options.reasoningEffort || DEFAULT_REASONING_EFFORT
+  const serviceTier = options.serviceTier || DEFAULT_SERVICE_TIER
   const sandbox = options.sandbox || 'read-only'
   const imageArgs = (options.images || []).flatMap(image => ['--image', image])
   const featureArgs = (options.enabledFeatures || []).flatMap(feature => ['--enable', feature])
@@ -76,6 +81,8 @@ export function buildCodexExecCommand(options: CodexExecCommandOptions) {
       model,
       '--config',
       `model_reasoning_effort="${reasoningEffort}"`,
+      '--config',
+      `service_tier="${serviceTier}"`,
       ...imageArgs,
       '--output-schema',
       options.schemaPath,
@@ -130,6 +137,7 @@ export async function runCodexCliJson<T = unknown>(options: CodexRunOptions<T>):
       codexBin: options.codexBin,
       model: options.model,
       reasoningEffort: options.reasoningEffort,
+      serviceTier: options.serviceTier,
       sandbox: options.sandbox,
       images: options.images,
       enabledFeatures: options.enabledFeatures,

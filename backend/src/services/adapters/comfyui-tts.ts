@@ -72,6 +72,8 @@ const SEED_CONTROL_VALUES = new Set(['fixed', 'randomize', 'increment', 'decreme
 const UI_ONLY_INPUT_TYPE_SUFFIXES = ['UPLOAD', '_UI']
 const POLL_INTERVAL_MS = 1500
 const GENERATION_TIMEOUT_MS = 600_000
+const DEFAULT_AUDIO_FILENAME_PREFIX = 'audio/huobao-tts'
+const FISHS2_DIALOGUE_PAUSE_AFTER_SPEAKER = 0.25
 
 export class ComfyUiTTSAdapter implements TTSProviderAdapter {
   readonly provider = 'comfyui'
@@ -87,14 +89,16 @@ export class ComfyUiTTSAdapter implements TTSProviderAdapter {
       && speakerVoices.length <= 3
       && multiSpeakerVoices.length === speakerVoices.length
       && multiSpeakerVoices.every(isReferenceAudioSource)
-    const text = useMultiSpeakerWorkflow ? formatComfyUiSpeakerText(speakerLines) : String(params.text || '')
     const workflowKey = selectComfyUiAudioWorkflow({
-      text,
+      text: String(params.text || ''),
       voice,
       voices: useMultiSpeakerWorkflow ? multiSpeakerVoices : undefined,
       speakerCount: useMultiSpeakerWorkflow ? speakerVoices.length : undefined,
       model,
     })
+    const text = useMultiSpeakerWorkflow
+      ? formatComfyUiSpeakerText(speakerLines, isFishS2MultiSpeakerWorkflowKey(workflowKey))
+      : String(params.text || '')
     const referenceSources = useMultiSpeakerWorkflow
       ? multiSpeakerVoices
       : (isReferenceAudioSource(voice) ? [voice] : [])
@@ -160,6 +164,8 @@ export function resolveComfyUiAudioWorkflow(params: ResolveAudioWorkflowParams):
     : (params.referenceAudioFilename ? [params.referenceAudioFilename] : [])
   if (referenceAudioFilenames.length) applyReferenceAudioInjection(graph, referenceAudioFilenames)
   applyModelPathInjection(graph, params.modelPath || '')
+  applyFishS2DialoguePause(graph)
+  applySafeAudioOutputPrefixes(graph)
   pruneUnreachableFromOutputs(graph)
   assignRandomSeeds(graph)
   return graph
@@ -390,6 +396,39 @@ function applyModelPathInjection(graph: WorkflowGraph, modelPath: string): void 
   }
 }
 
+function applySafeAudioOutputPrefixes(graph: WorkflowGraph): void {
+  for (const node of Object.values(graph)) {
+    if (!OUTPUT_NODE_TYPES.has(normalizeNodeType(node.class_type))) continue
+    if (!Object.prototype.hasOwnProperty.call(node.inputs, 'filename_prefix')) continue
+    node.inputs.filename_prefix = sanitizeAudioFilenamePrefix(String(node.inputs.filename_prefix || ''))
+  }
+}
+
+function sanitizeAudioFilenamePrefix(value: string): string {
+  const normalized = value.trim().replace(/\\/g, '/')
+  if (!normalized) return DEFAULT_AUDIO_FILENAME_PREFIX
+
+  const safe = normalized
+    .split('/')
+    .map(segment => segment
+      .replace(/[<>:"\\|?*\u0000-\u001F]/g, '-')
+      .replace(/[. ]+$/g, '')
+      .trim(),
+    )
+    .filter(Boolean)
+    .join('/')
+
+  return safe || DEFAULT_AUDIO_FILENAME_PREFIX
+}
+
+function applyFishS2DialoguePause(graph: WorkflowGraph): void {
+  for (const node of Object.values(graph)) {
+    if (normalizeNodeType(node.class_type) !== 'fishs2multispeakertts') continue
+    if (!Object.prototype.hasOwnProperty.call(node.inputs, 'pause_after_speaker')) continue
+    node.inputs.pause_after_speaker = FISHS2_DIALOGUE_PAUSE_AFTER_SPEAKER
+  }
+}
+
 function pruneUnreachableFromOutputs(graph: WorkflowGraph): void {
   const outputNodeIds = Object.entries(graph)
     .filter(([, node]) => OUTPUT_NODE_TYPES.has(normalizeNodeType(node.class_type)))
@@ -476,10 +515,11 @@ function collectSpeakerVoices(lines: NormalizedSpeakerLine[]): Array<{ key: stri
   return [...speakers.values()]
 }
 
-function formatComfyUiSpeakerText(lines: NormalizedSpeakerLine[]): string {
+function formatComfyUiSpeakerText(lines: NormalizedSpeakerLine[], separateTurns = false): string {
   const speakerIndexes = new Map<string, number>()
   let nextSpeakerIndex = 1
 
+  const separator = separateTurns ? '\n\n' : '\n'
   return lines.map((line, index) => {
     const speakerKey = getSpeakerKey(line, index)
     let speakerIndex = speakerIndexes.get(speakerKey)
@@ -489,11 +529,16 @@ function formatComfyUiSpeakerText(lines: NormalizedSpeakerLine[]): string {
       nextSpeakerIndex += 1
     }
     return `[speaker_${speakerIndex}]: ${line.text}`
-  }).join('\n')
+  }).join(separator)
 }
 
 function getSpeakerKey(line: TTSMultiSpeakerLine, index: number): string {
   return line.speaker || line.voice || `speaker_${index + 1}`
+}
+
+function isFishS2MultiSpeakerWorkflowKey(workflowKey: string): boolean {
+  const key = stripJsonSuffix(workflowKey).replace(/\\/g, '/')
+  return key === FISHS2_TWO_CLONE_WORKFLOW || key === FISHS2_THREE_CLONE_WORKFLOW
 }
 
 function isReferenceAudioSource(value: unknown): boolean {

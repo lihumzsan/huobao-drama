@@ -51,6 +51,14 @@ test('uses the installed Windows Codex CLI before the WindowsApps alias', (t) =>
   }
 })
 
+test('defaults Codex exec to xhigh reasoning and fast service tier', () => {
+  const command = buildCodexExecCommand(baseOptions)
+  const configValues = command.args.flatMap((arg, index) => arg === '--config' ? [command.args[index + 1]] : [])
+
+  assert.ok(configValues.includes('model_reasoning_effort="xhigh"'))
+  assert.ok(configValues.includes('service_tier="fast"'))
+})
+
 test('can build a workspace-write Codex exec command with attached images', () => {
   const command = buildCodexExecCommand({
     ...baseOptions,

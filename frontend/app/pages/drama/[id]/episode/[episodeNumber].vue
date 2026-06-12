@@ -843,7 +843,7 @@
               <span class="tag mono">{{ ttsGeneratedCount }}/{{ ttsEligibleCount }} 已生成</span>
               <span class="tag">{{ lockedAudioConfigLabel }}</span>
               <div class="ml-auto flex gap-1">
-                <button class="btn btn-sm" @click="batchShotTTS">
+                <button class="btn btn-sm" :disabled="hasPendingTTSJobs" @click="batchShotTTS">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
                   批量生成
                 </button>
@@ -868,17 +868,18 @@
                     </div>
                     <div class="dub-desc">{{ getDialogueText(sb) || '未填写文本' }}</div>
                     </div>
-                    <span class="tag" :class="hasTTS(sb) ? 'tag-success' : ''">{{ hasTTS(sb) ? '已生成' : '待生成' }}</span>
+                    <span class="tag" :class="{ 'tag-success': hasTTS(sb), 'tag-info': isPendingTTS(sb.id), 'tag-error': ttsJobFailed(sb.id) }">{{ ttsStatusLabelForStoryboard(sb) }}</span>
                   </div>
                 <div class="dub-meta">
                   <span class="dim">{{ sb.shot_type || sb.shotType || '未设景别' }}</span>
                   <span class="dim">{{ sb.duration || 10 }}s</span>
                   <span class="dim">{{ sb.location || '未设地点' }}</span>
                 </div>
+                <div v-if="ttsJobText(sb)" :class="['asset-job-status', ttsJobFailed(sb.id) && 'is-error']">{{ ttsJobText(sb) }}</div>
                 <div class="dub-foot">
                   <audio v-if="hasTTS(sb)" :src="'/' + getTTSUrl(sb)" controls preload="none" class="dub-audio" />
-                  <div v-else class="dim" style="font-size:12px">尚未生成语音文件</div>
-                  <button class="btn btn-sm ml-auto" @click="genShotTTS(sb)">生成配音</button>
+                  <div v-else class="dim" style="font-size:12px">{{ isPendingTTS(sb.id) ? '配音请求已发送，等待生成完成' : '尚未生成语音文件' }}</div>
+                  <button class="btn btn-sm ml-auto" :disabled="isPendingTTS(sb.id)" @click="genShotTTS(sb)">{{ ttsButtonText(sb) }}</button>
                 </div>
               </div>
             </div>
@@ -1463,6 +1464,7 @@ import {
 import { dramaAPI, episodeAPI, storyboardAPI, characterAPI, sceneAPI, imageAPI, videoAPI, composeAPI, mergeAPI, gridAPI, aiConfigAPI, voicesAPI, uploadAPI } from '~/composables/useApi'
 import { useAgent } from '~/composables/useAgent'
 import { formatImageGenerationJob, shouldPollImageGenerationJob } from '~/utils/imageGenerationStatus'
+import { formatTTSGenerationJob, isPendingTTSJob, isRecoverableTTSFetchError, ttsActionLabel, ttsStatusLabel } from '~/utils/ttsGenerationStatus'
 import BaseSelect from '~/components/BaseSelect.vue'
 
 definePageMeta({ layout: 'studio' })
@@ -1528,12 +1530,15 @@ const pendingShotFrameKeys = ref([])
 const pendingVideoIds = ref([])
 const pendingComposeIds = ref([])
 const pendingVoiceUploadIds = ref([])
+const pendingTTSJobs = ref({})
 const failedVideoMessages = ref({})
 const failedComposeMessages = ref({})
 const uploadedVoiceNames = ref({})
 const roleVoiceAccept = 'audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm'
 const imageViewer = ref({ open: false, src: '', title: '' })
 let generationStatusTimer = null
+const TTS_RECOVERY_POLL_MS = 5000
+const TTS_RECOVERY_MAX_POLLS = 120
 const defaultCodexImageConfig = Object.freeze({
   id: null,
   name: '本机 Codex 图片',
@@ -3066,30 +3071,119 @@ function isTTSIgnorable(sb) {
 function hasDialogue(sb) { return !isTTSIgnorable(sb) }
 function hasTTS(sb) { return !!(sb?.tts_audio_url || sb?.ttsAudioUrl) }
 function getTTSUrl(sb) { return sb?.tts_audio_url || sb?.ttsAudioUrl || '' }
+function findStoryboardById(id) {
+  return sbs.value.find(item => Number(item?.id) === Number(id)) || null
+}
+function getTTSJob(id) { return pendingTTSJobs.value[id] || null }
+function setTTSJob(id, patch) {
+  const current = getTTSJob(id) || { startedAt: Date.now(), status: 'pending' }
+  pendingTTSJobs.value = {
+    ...pendingTTSJobs.value,
+    [id]: {
+      ...current,
+      ...patch,
+      startedAt: patch.startedAt || current.startedAt || Date.now(),
+    },
+  }
+  generationStatusNow.value = Date.now()
+}
+function clearTTSJob(id) {
+  const next = { ...pendingTTSJobs.value }
+  delete next[id]
+  pendingTTSJobs.value = next
+  generationStatusNow.value = Date.now()
+}
+function ttsJobFailed(id) { return getTTSJob(id)?.status === 'failed' }
+function isPendingTTS(id) { return isPendingTTSJob(getTTSJob(id)) }
+function ttsStatusLabelForStoryboard(sb) {
+  return ttsStatusLabel({ hasAudio: hasTTS(sb), job: getTTSJob(sb?.id) })
+}
+function ttsJobText(sb) {
+  if (!sb || hasTTS(sb)) return ''
+  return formatTTSGenerationJob(getTTSJob(sb.id), generationStatusNow.value)
+}
+function ttsButtonText(sb) {
+  return ttsActionLabel({ hasAudio: hasTTS(sb), job: getTTSJob(sb?.id) })
+}
+function ttsShotLabel(sb) { return `#${sb?.storyboard_number || sb?.storyboardNumber || sb?.id}` }
+function errorMessage(error, fallback = '生成失败') { return error?.message || String(error || fallback) }
+const hasPendingTTSJobs = computed(() => Object.values(pendingTTSJobs.value).some(job => isPendingTTSJob(job)))
+function sleepTTSRecovery(ms) { return new Promise(resolve => window.setTimeout(resolve, ms)) }
+async function refreshStoryboardsForTTS(storyboardId) {
+  if (!epId.value) return null
+  try {
+    sbs.value = await episodeAPI.storyboards(epId.value)
+    return findStoryboardById(storyboardId)
+  } catch {
+    return null
+  }
+}
+async function waitForTTSResultAfterFetchError(storyboardId) {
+  for (let attempt = 0; attempt < TTS_RECOVERY_MAX_POLLS; attempt += 1) {
+    const latest = await refreshStoryboardsForTTS(storyboardId)
+    if (latest && hasTTS(latest)) return latest
+    await sleepTTSRecovery(TTS_RECOVERY_POLL_MS)
+  }
+  return null
+}
 function getDialogueSpeaker(sb) {
   const speaker = getDialogueSpeakerRaw(sb)
   if (!speaker) return '旁白'
   return speaker
 }
 async function genShotTTS(sb) {
+  if (!sb?.id || isPendingTTS(sb.id)) return
+  const shotLabel = ttsShotLabel(sb)
+  setTTSJob(sb.id, { status: 'processing', startedAt: Date.now(), error: null })
+  toast.info(`镜头 ${shotLabel} 配音请求已发送，正在等待 ComfyUI`)
   try {
     await storyboardAPI.generateTTS(sb.id)
-    toast.success(`镜头 #${sb.storyboard_number || sb.storyboardNumber || sb.id} 配音已生成`)
+    setTTSJob(sb.id, { status: 'completed' })
+    toast.success(`镜头 ${shotLabel} 配音已生成`)
     await refresh()
-  } catch (e) { toast.error(e.message) }
+    clearTTSJob(sb.id)
+  } catch (e) {
+    if (isRecoverableTTSFetchError(e)) {
+      setTTSJob(sb.id, { status: 'processing', error: null })
+      toast.warning(`镜头 ${shotLabel} 请求连接中断，正在核对生成结果`)
+      const recovered = await waitForTTSResultAfterFetchError(sb.id)
+      if (recovered) {
+        setTTSJob(sb.id, { status: 'completed' })
+        toast.success(`镜头 ${shotLabel} 配音已生成`)
+        clearTTSJob(sb.id)
+        return
+      }
+    }
+    const message = errorMessage(e, '配音生成失败')
+    setTTSJob(sb.id, { status: 'failed', error: message })
+    toast.error(`镜头 ${shotLabel} 配音生成失败：${message}`)
+  }
 }
 async function batchShotTTS() {
-  const pending = sbs.value.filter(sb => hasDialogue(sb) && !hasTTS(sb))
+  const pending = sbs.value.filter(sb => hasDialogue(sb) && !hasTTS(sb) && !isPendingTTS(sb.id))
   if (!pending.length) {
     toast.info(ttsEligibleCount.value ? '所有镜头配音已生成' : '当前没有可生成的对白或旁白')
     return
   }
+  pending.forEach(sb => setTTSJob(sb.id, { status: 'processing', startedAt: Date.now(), error: null }))
+  toast.info(`已发送 ${pending.length} 条配音生成请求，正在等待 ComfyUI`)
   const results = await Promise.allSettled(pending.map(sb => storyboardAPI.generateTTS(sb.id)))
   const okCount = results.filter(r => r.status === 'fulfilled').length
   const failCount = results.length - okCount
+  results.forEach((result, index) => {
+    const sb = pending[index]
+    if (result.status === 'fulfilled') {
+      setTTSJob(sb.id, { status: 'completed' })
+    } else {
+      setTTSJob(sb.id, { status: 'failed', error: errorMessage(result.reason, '配音生成失败') })
+    }
+  })
   if (okCount) toast.success(`已生成 ${okCount} 条镜头配音`)
   if (failCount) toast.error(`${failCount} 条镜头配音生成失败`)
   await refresh()
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') clearTTSJob(pending[index].id)
+  })
 }
 
 function getFirstFrame(s) { return s?.first_frame_image || s?.firstFrameImage || null }

@@ -63,6 +63,8 @@ test('runs Codex image generation through an injectable runner and returns a loc
   try {
     const adapter = new CodexImageAdapter(async (options) => {
       assert.equal(options.sandbox, 'danger-full-access')
+      assert.equal(options.reasoningEffort, 'xhigh')
+      assert.equal(options.serviceTier, 'fast')
       assert.deepEqual(options.enabledFeatures, ['image_generation'])
       assert.equal(options.images?.length, 2)
       const outputMatch = options.prompt.match(/OUTPUT_PATH: (.+)/)
