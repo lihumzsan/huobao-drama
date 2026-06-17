@@ -13,6 +13,7 @@ import type {
   VideoPollResponse,
 } from './types'
 import { joinProviderUrl } from './url'
+import { normalizeVideoDuration } from '../duration.js'
 
 export class ViduVideoAdapter implements VideoProviderAdapter {
   provider = 'vidu'
@@ -40,7 +41,7 @@ export class ViduVideoAdapter implements VideoProviderAdapter {
     }
 
     // 可选参数
-    if (record.duration) body.duration = record.duration
+    if (record.duration) body.duration = normalizeVideoDuration(record.duration)
     if (record.aspectRatio) {
       // Vidu 使用 resolution 参数而非 aspect ratio
       const ratioMap: Record<string, string> = {

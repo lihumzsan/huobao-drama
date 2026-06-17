@@ -53,13 +53,13 @@ export interface ImageProviderAdapter {
 export interface VideoProviderAdapter {
   provider: string
 
-  buildGenerateRequest(config: AIConfig, record: VideoGenerationRecord): ProviderRequest
+  buildGenerateRequest(config: AIConfig, record: VideoGenerationRecord): ProviderRequest | Promise<ProviderRequest>
 
   parseGenerateResponse(result: any): VideoGenResponse
 
   buildPollRequest(config: AIConfig, taskId: string): ProviderRequest
 
-  parsePollResponse(result: any): VideoPollResponse
+  parsePollResponse(result: any, config?: AIConfig): VideoPollResponse
 
   extractVideoUrl(result: any): string | null
 }
@@ -99,8 +99,16 @@ export interface VideoGenerationRecord {
   firstFrameUrl?: string | null
   lastFrameUrl?: string | null
   referenceImageUrls?: string | null
+  audioUrl?: string | null
   duration?: number | null
+  fps?: number | null
+  frameCount?: number | null
+  resolution?: string | null
   aspectRatio?: string | null
+  style?: string | null
+  motionLevel?: number | null
+  cameraMotion?: string | null
+  seed?: number | null
   // ... 其他字段
 }
 

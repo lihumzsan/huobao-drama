@@ -11,13 +11,14 @@ import type {
   VideoPollResponse,
 } from './types'
 import { joinProviderUrl } from './url'
+import { normalizeVideoDuration } from '../duration.js'
 
 export class MiniMaxVideoAdapter implements VideoProviderAdapter {
   provider = 'minimax'
 
   buildGenerateRequest(config: AIConfig, record: VideoGenerationRecord): ProviderRequest {
     let promptText = record.prompt || ''
-    promptText += `  --ratio ${record.aspectRatio || '16:9'}  --dur ${record.duration || 5}`
+    promptText += `  --ratio ${record.aspectRatio || '16:9'}  --dur ${normalizeVideoDuration(record.duration)}`
 
     const content: any[] = [{ type: 'text', text: promptText }]
 

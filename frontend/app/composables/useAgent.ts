@@ -10,13 +10,13 @@ export function useAgent() {
     running.value = true
     runningType.value = type
     try {
-      await api.post<any>(`/agent/${type}/chat`, {
+      const result = await api.post<any>(`/agent/${type}/chat`, {
         message: msg,
         drama_id: dramaId,
         episode_id: episodeId,
       })
       await onDone?.()
-      toast.success('完成')
+      toast.success(result?.text || '完成')
     } catch (err: any) {
       toast.error(err.message)
     } finally {

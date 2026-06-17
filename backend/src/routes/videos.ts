@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
 import { db, schema } from '../db/index.js'
 import { success, created, badRequest } from '../utils/response.js'
-import { generateVideo } from '../services/video-generation.js'
+import { generateVideo, refreshVideoGenerationStatus } from '../services/video-generation.js'
 import { logTaskError, logTaskPayload, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
 const app = new Hono()
@@ -39,8 +39,16 @@ app.post('/', async (c) => {
       firstFrameUrl: body.first_frame_url,
       lastFrameUrl: body.last_frame_url,
       referenceImageUrls: body.reference_image_urls,
+      audioUrl: body.audio_url || body.audioUrl,
       duration: body.duration,
+      fps: body.fps,
+      frameCount: body.frame_count,
+      resolution: body.resolution,
       aspectRatio: body.aspect_ratio,
+      style: body.style,
+      motionLevel: body.motion_level,
+      cameraMotion: body.camera_motion,
+      seed: body.seed,
       configId,
     })
 
@@ -57,8 +65,7 @@ app.post('/', async (c) => {
 // GET /videos/:id
 app.get('/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const [row] = db.select().from(schema.videoGenerations)
-    .where(eq(schema.videoGenerations.id, id)).all()
+  const row = await refreshVideoGenerationStatus(id)
   return success(c, row || null)
 })
 

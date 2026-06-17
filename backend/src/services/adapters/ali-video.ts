@@ -4,6 +4,7 @@
  */
 import type { VideoProviderAdapter, VideoGenerationRecord } from './types'
 import { joinProviderUrl } from './url'
+import { normalizeVideoDuration } from '../duration.js'
 
 export class AliVideoAdapter implements VideoProviderAdapter {
   readonly provider = 'ali'
@@ -30,7 +31,7 @@ export class AliVideoAdapter implements VideoProviderAdapter {
       },
       parameters: {
         resolution: this.normalizeResolution(record.aspectRatio ?? '16:9'),
-        duration: record.duration || 5,
+        duration: normalizeVideoDuration(record.duration),
         watermark: false,
         seed: Math.floor(Math.random() * 2147483647),
       },

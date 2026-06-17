@@ -8,9 +8,25 @@ import { db, schema } from '../../db/index.js'
 import { eq } from 'drizzle-orm'
 import { now } from '../../utils/response.js'
 import { logTaskProgress, logTaskSuccess } from '../../utils/task-logger.js'
+import {
+  DEFAULT_STORYBOARD_DURATION_SECONDS,
+  MAX_STORYBOARD_DURATION_SECONDS,
+  MIN_STORYBOARD_DURATION_SECONDS,
+  assertStoryboardDurationRhythm,
+  requireStoryboardDuration,
+} from '../../services/duration.js'
+import {
+  assertStoryboardContextReady,
+  assertStoryboardSequence,
+  assertStoryboardVideoPromptTiming,
+} from '../../services/storyboard-validation.js'
 
 function syncStoryboardCharacters(storyboardId: number, characterIds: number[]) {
-  db.delete(schema.storyboardCharacters)
+  syncStoryboardCharactersWithDb(db, storyboardId, characterIds)
+}
+
+function syncStoryboardCharactersWithDb(targetDb: any, storyboardId: number, characterIds: number[]) {
+  targetDb.delete(schema.storyboardCharacters)
     .where(eq(schema.storyboardCharacters.storyboardId, storyboardId))
     .run()
 
@@ -18,7 +34,7 @@ function syncStoryboardCharacters(storyboardId: number, characterIds: number[]) 
   if (!uniqueIds.length) return
 
   for (const characterId of uniqueIds) {
-    db.insert(schema.storyboardCharacters).values({
+    targetDb.insert(schema.storyboardCharacters).values({
       storyboardId,
       characterId,
     }).run()
@@ -84,7 +100,7 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
 
       const characters = chars
         .filter(c => !c.deletedAt)
-        .filter(c => !linkedCharacterIds.size || linkedCharacterIds.has(c.id))
+        .filter(c => linkedCharacterIds.has(c.id))
         .map(c => ({
           id: c.id,
           name: c.name,
@@ -99,7 +115,7 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
 
       const scenes = scns
         .filter(s => !s.deletedAt)
-        .filter(s => !linkedSceneIds.size || linkedSceneIds.has(s.id))
+        .filter(s => linkedSceneIds.has(s.id))
         .map(s => ({
           id: s.id,
           location: s.location,
@@ -131,8 +147,9 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
               .map(link => link.characterId),
             shot_type: sb.shotType || '',
             duration: sb.duration || 0,
-          })),
+        })),
       }
+      assertStoryboardContextReady(payload)
       logTaskSuccess('StoryboardTool', 'read-context', {
         episodeId,
         dramaId,
@@ -166,7 +183,7 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
         video_prompt: z.string().optional(),
         bgm_prompt: z.string().optional(),
         sound_effect: z.string().optional(),
-        duration: z.number().optional(),
+        duration: z.number().int().min(MIN_STORYBOARD_DURATION_SECONDS).max(MAX_STORYBOARD_DURATION_SECONDS).optional(),
         scene_id: z.number().nullable().optional(),
         character_ids: z.array(z.number()).optional(),
       })),
@@ -179,47 +196,57 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
         count: storyboards.length,
         shotNumbers: storyboards.map(sb => sb.shot_number).join(','),
       })
-      const existingStoryboardIds = db.select().from(schema.storyboards)
-        .where(eq(schema.storyboards.episodeId, episodeId)).all()
-        .map(sb => sb.id)
-      for (const storyboardId of existingStoryboardIds) {
-        db.delete(schema.storyboardCharacters)
-          .where(eq(schema.storyboardCharacters.storyboardId, storyboardId))
-          .run()
+      assertStoryboardSequence(storyboards)
+      assertStoryboardVideoPromptTiming(storyboards)
+      const sortedStoryboards = [...storyboards].sort((a, b) => a.shot_number - b.shot_number)
+      const durations = assertStoryboardDurationRhythm(sortedStoryboards)
+      for (const sb of sortedStoryboards) {
+        validateStoryboardBindings(episodeId, sb.scene_id, sb.character_ids)
       }
-      db.delete(schema.storyboards).where(eq(schema.storyboards.episodeId, episodeId)).run()
 
       let totalDuration = 0
-      for (const sb of storyboards) {
-        validateStoryboardBindings(episodeId, sb.scene_id, sb.character_ids)
-        const res = db.insert(schema.storyboards).values({
-          episodeId,
-          storyboardNumber: sb.shot_number,
-          title: sb.title, shotType: sb.shot_type,
-          angle: sb.angle, movement: sb.movement,
-          location: sb.location, time: sb.time,
-          action: sb.action, dialogue: sb.dialogue,
-          description: sb.description, result: sb.result,
-          atmosphere: sb.atmosphere, imagePrompt: sb.image_prompt,
-          videoPrompt: sb.video_prompt, bgmPrompt: sb.bgm_prompt,
-          soundEffect: sb.sound_effect,
-          sceneId: sb.scene_id, duration: sb.duration || 10,
-          createdAt: ts, updatedAt: ts,
-        }).run()
-        syncStoryboardCharacters(Number(res.lastInsertRowid), sb.character_ids || [])
-        totalDuration += sb.duration || 10
-      }
+      db.transaction((tx) => {
+        const existingStoryboardIds = tx.select().from(schema.storyboards)
+          .where(eq(schema.storyboards.episodeId, episodeId)).all()
+          .map(sb => sb.id)
+        for (const storyboardId of existingStoryboardIds) {
+          tx.delete(schema.storyboardCharacters)
+            .where(eq(schema.storyboardCharacters.storyboardId, storyboardId))
+            .run()
+        }
+        tx.delete(schema.storyboards).where(eq(schema.storyboards.episodeId, episodeId)).run()
 
-      db.update(schema.episodes)
-        .set({ duration: Math.ceil(totalDuration / 60), updatedAt: ts })
-        .where(eq(schema.episodes.id, episodeId)).run()
+        for (const [index, sb] of sortedStoryboards.entries()) {
+          const duration = durations[index] ?? requireStoryboardDuration(sb.duration ?? DEFAULT_STORYBOARD_DURATION_SECONDS)
+          const res = tx.insert(schema.storyboards).values({
+            episodeId,
+            storyboardNumber: sb.shot_number,
+            title: sb.title, shotType: sb.shot_type,
+            angle: sb.angle, movement: sb.movement,
+            location: sb.location, time: sb.time,
+            action: sb.action, dialogue: sb.dialogue,
+            description: sb.description, result: sb.result,
+            atmosphere: sb.atmosphere, imagePrompt: sb.image_prompt,
+            videoPrompt: sb.video_prompt, bgmPrompt: sb.bgm_prompt,
+            soundEffect: sb.sound_effect,
+            sceneId: sb.scene_id, duration,
+            createdAt: ts, updatedAt: ts,
+          }).run()
+          syncStoryboardCharactersWithDb(tx, Number(res.lastInsertRowid), sb.character_ids || [])
+          totalDuration += duration
+        }
+
+        tx.update(schema.episodes)
+          .set({ duration: Math.ceil(totalDuration / 60), updatedAt: ts })
+          .where(eq(schema.episodes.id, episodeId)).run()
+      })
 
       logTaskSuccess('StoryboardTool', 'save-complete', {
         episodeId,
         count: storyboards.length,
         totalDuration,
       })
-      return { message: `Saved ${storyboards.length} storyboards`, count: storyboards.length, total_duration: totalDuration }
+      return { message: `Saved ${sortedStoryboards.length} storyboards`, count: sortedStoryboards.length, total_duration: totalDuration }
     },
   })
 
@@ -245,7 +272,7 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
       dialogue: z.string().optional(),
       scene_id: z.number().nullable().optional(),
       character_ids: z.array(z.number()).optional(),
-      duration: z.number().optional(),
+      duration: z.number().int().min(MIN_STORYBOARD_DURATION_SECONDS).max(MAX_STORYBOARD_DURATION_SECONDS).optional(),
     }),
     execute: async ({ storyboard_id, ...fields }) => {
       const [storyboard] = db.select().from(schema.storyboards).where(eq(schema.storyboards.id, storyboard_id)).all()
@@ -283,7 +310,7 @@ export function createStoryboardTools(episodeId: number, dramaId: number) {
       if ('description' in fields) updates.description = fields.description
       if ('dialogue' in fields) updates.dialogue = fields.dialogue
       if ('scene_id' in fields) updates.sceneId = fields.scene_id
-      if ('duration' in fields) updates.duration = fields.duration
+      if ('duration' in fields) updates.duration = requireStoryboardDuration(fields.duration)
       db.update(schema.storyboards).set(updates).where(eq(schema.storyboards.id, storyboard_id)).run()
       if ('character_ids' in fields) syncStoryboardCharacters(storyboard_id, fields.character_ids || [])
       logTaskSuccess('StoryboardTool', 'update-complete', {

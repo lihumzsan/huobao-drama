@@ -474,7 +474,7 @@
                     <div class="shot-desc">{{ sb.description || sb.title || '无描述' }}</div>
                   </div>
                   <div class="shot-meta">
-                    <span class="mono dim" style="font-size:10px">{{ sb.duration || 10 }}s</span>
+                    <span class="mono dim" style="font-size:10px">{{ shotDuration(sb) }}s</span>
                     <span v-if="sb.location" class="shot-location">{{ sb.location }}</span>
                     <span v-if="getStoryboardCharacterNames(sb).length" class="shot-location">{{ getStoryboardCharacterNames(sb).join(' / ') }}</span>
                     <span v-if="sb.dialogue" class="shot-dialogue">{{ sb.dialogue }}</span>
@@ -490,7 +490,7 @@
                     <span class="detail-head-title">镜头 #{{ sbs.indexOf(selectedSb) + 1 }}</span>
                   <span class="detail-head-sub">{{ selectedSb.title || `镜头 ${sbs.indexOf(selectedSb) + 1}` }} · {{ selectedSb.shot_type || selectedSb.shotType || '未设置景别' }}</span>
                   </div>
-                  <span class="tag mono">{{ (selectedSb.duration || 10) }}s</span>
+                  <span class="tag mono">{{ shotDuration(selectedSb) }}s</span>
                   <button class="btn btn-ghost btn-icon ml-auto" style="color:var(--error)" @click="deleteShot(selectedSb)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
                   </button>
@@ -625,7 +625,7 @@
                     </label>
                     <label class="field">
                       <span class="field-label">时长</span>
-                      <input :value="selectedSb.duration || 10" class="input" type="number" min="1" max="60"
+                      <input :value="shotDuration(selectedSb)" class="input" type="number" :min="MIN_SHOT_DURATION" :max="MAX_SHOT_DURATION"
                         @blur="updateField(selectedSb, 'duration', Number($event.target.value))" />
                     </label>
                   </div>
@@ -678,7 +678,7 @@
                   <label class="field">
                     <span class="field-label">视频提示词</span>
                     <textarea :value="selectedSb.video_prompt || selectedSb.videoPrompt || ''" class="textarea" rows="5"
-                      @blur="updateField(selectedSb, 'video_prompt', $event.target.value)" placeholder="按 3 秒分段的视频提示词..." />
+                      @blur="updateField(selectedSb, 'video_prompt', $event.target.value)" placeholder="按镜头实际时长分段的视频提示词..." />
                   </label>
                   <div class="field-grid field-grid-2">
                     <label class="field">
@@ -872,7 +872,7 @@
                   </div>
                 <div class="dub-meta">
                   <span class="dim">{{ sb.shot_type || sb.shotType || '未设景别' }}</span>
-                  <span class="dim">{{ sb.duration || 10 }}s</span>
+                  <span class="dim">{{ shotDuration(sb) }}s</span>
                   <span class="dim">{{ sb.location || '未设地点' }}</span>
                 </div>
                 <div v-if="ttsJobText(sb)" :class="['asset-job-status', ttsJobFailed(sb.id) && 'is-error']">{{ ttsJobText(sb) }}</div>
@@ -1246,7 +1246,7 @@
                 </div>
                 <div class="prod-info">
                   <div class="prod-desc truncate">{{ sb.description || sb.title || '—' }}</div>
-                  <div class="prod-meta-line">{{ sb.shot_type || sb.shotType || '未设景别' }} · {{ sb.duration || 10 }}s</div>
+                  <div class="prod-meta-line">{{ sb.shot_type || sb.shotType || '未设景别' }} · {{ shotDuration(sb) }}s</div>
                   <div class="prod-dots">
                     <span :class="['dot', hasImg(sb) && 'ok']" /><span style="font-size:10px">图</span>
                     <span :class="['dot', hasVid(sb) && 'ok', isPendingVideo(sb.id) && 'pending']" /><span style="font-size:10px">{{ isPendingVideo(sb.id) ? '视频生成中' : '视频' }}</span>
@@ -1308,7 +1308,7 @@
                 </div>
                 <div class="prod-info">
                   <div class="prod-desc truncate">{{ sb.description || sb.title || '—' }}</div>
-                  <div class="prod-meta-line">{{ sb.shot_type || sb.shotType || '未设景别' }} · {{ sb.duration || 10 }}s</div>
+                  <div class="prod-meta-line">{{ sb.shot_type || sb.shotType || '未设景别' }} · {{ shotDuration(sb) }}s</div>
                   <div class="prod-dots">
                     <span :class="['dot', hasVid(sb) && 'ok']" /><span style="font-size:10px">视频</span>
                     <span :class="['dot', hasTTS(sb) && 'ok']" /><span style="font-size:10px">配音</span>
@@ -1859,6 +1859,13 @@ const visualChars = computed(() => chars.value.filter(c => !isNarratorCharacter(
 const lockedImageConfigId = computed(() => episode.value?.image_config_id || episode.value?.imageConfigId || null)
 const lockedVideoConfigId = computed(() => episode.value?.video_config_id || episode.value?.videoConfigId || null)
 const lockedAudioConfigId = computed(() => episode.value?.audio_config_id || episode.value?.audioConfigId || null)
+const defaultComfyUiVideoConfig = Object.freeze({
+  id: null,
+  name: '默认 ComfyUI 视频',
+  provider: 'comfyui',
+  model: '["basevideo/Seedance2.0_Bernini_01_480p_10s"]',
+  is_active: true,
+})
 const defaultComfyUiAudioConfig = Object.freeze({
   id: null,
   name: '默认 ComfyUI 音频',
@@ -1877,9 +1884,13 @@ const effectiveImageConfig = computed(() => {
   const locked = imageConfigs.value.find(c => c.id === lockedImageConfigId.value)
   return isConfigActive(locked) ? locked : (imageConfigs.value.find(isConfigActive) || defaultCodexImageConfig)
 })
+const effectiveVideoConfig = computed(() => {
+  const locked = videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)
+  return isConfigActive(locked) ? locked : (videoConfigs.value.find(isConfigActive) || defaultComfyUiVideoConfig)
+})
 const lockedAudioProvider = computed(() => effectiveAudioConfig.value?.provider || 'comfyui')
 const lockedImageConfigLabel = computed(() => configLabel(effectiveImageConfig.value))
-const lockedVideoConfigLabel = computed(() => configLabel(videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)))
+const lockedVideoConfigLabel = computed(() => configLabel(effectiveVideoConfig.value))
 const lockedAudioConfigLabel = computed(() => configLabel(effectiveAudioConfig.value))
 
 // Grid tool state
@@ -2642,7 +2653,21 @@ function getVoiceSelectOptions(char) {
 function getVoiceProfile(voiceId) {
   return voiceProfiles.value.find(v => v.id === voiceId) || null
 }
-const totalDuration = computed(() => sbs.value.reduce((s, sb) => s + (sb.duration || 10), 0))
+const MIN_SHOT_DURATION = 1
+const MAX_SHOT_DURATION = 10
+const DEFAULT_SHOT_DURATION = 6
+
+function normalizeShotDuration(value) {
+  const parsed = Math.round(Number(value ?? DEFAULT_SHOT_DURATION))
+  if (!Number.isFinite(parsed)) return DEFAULT_SHOT_DURATION
+  return Math.min(MAX_SHOT_DURATION, Math.max(MIN_SHOT_DURATION, parsed))
+}
+
+function shotDuration(sb) {
+  return normalizeShotDuration(sb?.duration ?? sb?.durationSeconds ?? DEFAULT_SHOT_DURATION)
+}
+
+const totalDuration = computed(() => sbs.value.reduce((s, sb) => s + shotDuration(sb), 0))
 
 const selectedSb = ref(null)
 const shotTypes = [
@@ -2654,12 +2679,13 @@ const shotAngles = ['平视', '仰视', '俯视', '侧拍', '背拍', '斜侧', 
 const shotMovements = ['固定', '推镜', '拉镜', '摇镜', '移镜', '跟拍', '升降', '手持', '环绕']
 
 function updateField(sb, field, value) {
-  const current = sb[field] ?? sb[toCamel(field)]
-  if (current === value) return
-  sb[field] = value
+  const nextValue = field === 'duration' ? normalizeShotDuration(value) : value
+  const current = field === 'duration' ? shotDuration(sb) : (sb[field] ?? sb[toCamel(field)])
+  if (current === nextValue) return
+  sb[field] = nextValue
   const camelField = toCamel(field)
-  if (camelField !== field) sb[camelField] = value
-  storyboardAPI.update(sb.id, { [field]: value })
+  if (camelField !== field) sb[camelField] = nextValue
+  storyboardAPI.update(sb.id, { [field]: nextValue })
 }
 
 function toCamel(field) {
@@ -2844,8 +2870,24 @@ async function uploadRoleVoice(char, event) {
   }
 }
 
+function hasStoryboardGeneratedAssets(sb) {
+  return !!(
+    sb?.composed_image || sb?.composedImage
+    || sb?.first_frame_image || sb?.firstFrameImage
+    || sb?.last_frame_image || sb?.lastFrameImage
+    || sb?.video_url || sb?.videoUrl
+    || sb?.tts_audio_url || sb?.ttsAudioUrl
+    || sb?.subtitle_url || sb?.subtitleUrl
+    || sb?.composed_video_url || sb?.composedVideoUrl
+  )
+}
+
 function doBreakdown() {
-  const cfg = videoConfigs.value.find(c => c.id === lockedVideoConfigId.value)
+  if (sbs.value.some(hasStoryboardGeneratedAssets)) {
+    const confirmed = window.confirm('重新拆解会替换当前分镜，并可能丢失已生成的配音、镜头图片、视频和合成结果。确认继续？')
+    if (!confirmed) return
+  }
+  const cfg = effectiveVideoConfig.value
   const label = cfg ? `${cfg.name} (${cfg.provider})` : '默认'
   runAgent('storyboard_breaker', `请拆解分镜并生成视频提示词。视频模型：${label}，请根据该模型的特性和时长限制生成合适的视频提示词。`, dramaId, epId.value, refresh)
 }
@@ -2856,7 +2898,7 @@ async function genSample(id) {
     refresh()
   } catch (e) { toast.error(e.message) }
 }
-async function addShot() { await storyboardAPI.create({ episode_id: epId.value, storyboard_number: sbs.value.length + 1, title: `镜头${sbs.value.length + 1}`, duration: 10 }); refresh() }
+async function addShot() { await storyboardAPI.create({ episode_id: epId.value, storyboard_number: sbs.value.length + 1, title: `镜头${sbs.value.length + 1}`, duration: DEFAULT_SHOT_DURATION }); refresh() }
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -3281,8 +3323,10 @@ async function genVid(sb) {
     storyboard_id: sb.id,
     drama_id: dramaId,
     prompt: sb.video_prompt || sb.videoPrompt || '',
-    duration: Number(sb.duration || 5),
+    duration: shotDuration(sb),
   }
+  const audioUrl = getTTSUrl(sb)
+  if (audioUrl) params.audio_url = audioUrl
   const first = getFirstFrame(sb)
   const last = getLastFrame(sb)
   const refs = getRefs(sb)

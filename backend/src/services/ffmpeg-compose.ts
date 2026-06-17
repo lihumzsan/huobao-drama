@@ -13,6 +13,7 @@ import { now } from '../utils/response.js'
 import { generateTTS } from './tts-generation.js'
 import { isNarratorSpeaker, parseDialogueForTTS as parseDialogueForTTSShared } from './tts-dialogue.js'
 import { logTaskError, logTaskProgress, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
+import { normalizeVideoDuration } from './duration.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const STORAGE_ROOT = process.env.STORAGE_PATH || path.resolve(__dirname, '../../../data/static')
@@ -126,7 +127,7 @@ export async function composeStoryboard(storyboardId: number): Promise<string> {
       const srtFilename = `${uuid()}.srt`
       subtitlePath = path.join(srtDir, srtFilename)
 
-      const duration = sb.duration || 10
+      const duration = normalizeVideoDuration(sb.duration)
       const pureText = parsedDialogue.pureText
       const srtContent = `1\n00:00:00,500 --> 00:00:${String(Math.min(duration - 1, 59)).padStart(2, '0')},000\n${pureText}\n`
       fs.writeFileSync(subtitlePath, srtContent, 'utf-8')

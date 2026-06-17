@@ -1,11 +1,19 @@
 import { db, schema } from '../db/index.js'
 import { eq } from 'drizzle-orm'
-import { getActiveConfig, getConfigById } from './ai.js'
+import { getVideoConfigById } from './ai.js'
 import { now } from '../utils/response.js'
 import { downloadFile, readImageAsCompressedDataUrl } from '../utils/storage.js'
 import { getVideoAdapter } from './adapters/registry'
 import type { AIConfig } from './adapters/types'
 import { logTaskError, logTaskPayload, logTaskProgress, logTaskStart, logTaskSuccess, logTaskWarn, redactUrl } from '../utils/task-logger.js'
+import { normalizeVideoDuration } from './duration.js'
+import {
+  inferComfyUiVideoMotionLevel,
+  normalizeComfyUiVideoFps,
+  normalizeComfyUiVideoFrameCount,
+  normalizeComfyUiVideoMotionLevel,
+  selectComfyUiVideoWorkflow,
+} from './adapters/comfyui-video.js'
 
 interface GenerateVideoParams {
   storyboardId?: number
@@ -17,31 +25,59 @@ interface GenerateVideoParams {
   firstFrameUrl?: string
   lastFrameUrl?: string
   referenceImageUrls?: string[]
+  audioUrl?: string
   duration?: number
+  fps?: number
+  frameCount?: number
+  resolution?: string
   aspectRatio?: string
+  style?: string
+  motionLevel?: number
+  cameraMotion?: string
+  seed?: number
   configId?: number
 }
 
 export async function generateVideo(params: GenerateVideoParams): Promise<number> {
   const ts = now()
-  const config = params.configId
-    ? getConfigById(params.configId)
-    : getActiveConfig('video')
-  if (!config) throw new Error('No active video AI config')
+  const duration = normalizeVideoDuration(params.duration)
+  const config = getVideoConfigById(params.configId)
+  const provider = String(config.provider || '').toLowerCase()
+  const audioUrl = normalizeOptionalUrl(params.audioUrl) || resolveStoryboardAudioUrl(params.storyboardId)
+  const selectedModel = provider === 'comfyui'
+    ? selectComfyUiVideoWorkflow(params.model || config.model, !!audioUrl)
+    : (params.model || config.model)
+  const fps = normalizeComfyUiVideoFps(params.fps)
+  const frameCount = normalizeComfyUiVideoFrameCount(params.frameCount, duration, fps)
+  const explicitMotionLevel = normalizeComfyUiVideoMotionLevel(params.motionLevel)
+  const motionLevel = explicitMotionLevel
+    || (provider === 'comfyui' ? inferComfyUiVideoMotionLevel([
+      params.prompt,
+      params.cameraMotion,
+      params.style,
+    ].filter(Boolean).join('\n')) : undefined)
 
   const res = db.insert(schema.videoGenerations).values({
     storyboardId: params.storyboardId,
     dramaId: params.dramaId,
     prompt: params.prompt,
-    model: params.model || config.model,
+    model: selectedModel,
     provider: config.provider,
     referenceMode: params.referenceMode || 'none',
     imageUrl: params.imageUrl,
     firstFrameUrl: params.firstFrameUrl,
     lastFrameUrl: params.lastFrameUrl,
     referenceImageUrls: params.referenceImageUrls ? JSON.stringify(params.referenceImageUrls) : null,
-    duration: params.duration || 5,
+    audioUrl,
+    duration,
+    fps,
+    frameCount,
+    resolution: params.resolution || (provider === 'comfyui' ? '480p' : undefined),
     aspectRatio: params.aspectRatio || '16:9',
+    style: params.style,
+    motionLevel,
+    cameraMotion: params.cameraMotion,
+    seed: params.seed,
     status: 'processing',
     createdAt: ts,
     updatedAt: ts,
@@ -54,7 +90,11 @@ export async function generateVideo(params: GenerateVideoParams): Promise<number
     storyboardId: params.storyboardId,
     dramaId: params.dramaId,
     referenceMode: params.referenceMode || 'none',
-    duration: params.duration || 5,
+    duration,
+    fps,
+    frameCount,
+    motionLevel,
+    hasAudio: !!audioUrl,
   })
   logTaskPayload('VideoTask', 'enqueue params', {
     id: lastId,
@@ -64,12 +104,68 @@ export async function generateVideo(params: GenerateVideoParams): Promise<number
       baseUrl: config.baseUrl,
     },
     params,
+    audioUrl: audioUrl ? redactUrl(audioUrl) : null,
   })
   processVideoGeneration(lastId, config).catch(err => {
     logTaskError('VideoTask', 'process', { id: lastId, error: err.message })
     console.error(`Video generation ${lastId} failed:`, err)
   })
   return lastId
+}
+
+export async function refreshVideoGenerationStatus(id: number): Promise<any | null> {
+  const record = getVideoGenerationRecord(id)
+  if (!record) return null
+  if (!record.taskId || !['pending', 'processing'].includes(String(record.status))) return record
+
+  const fallbackConfig = getVideoConfigById()
+  const config: AIConfig = {
+    ...fallbackConfig,
+    provider: record.provider || fallbackConfig.provider,
+    model: record.model || fallbackConfig.model,
+  }
+  const adapter = getVideoAdapter(config.provider)
+  if (adapter.provider === 'vidu') return record
+
+  try {
+    const { url, method, headers } = adapter.buildPollRequest(config, record.taskId)
+    logTaskProgress('VideoTask', 'refresh-poll-request', {
+      id,
+      taskId: record.taskId,
+      provider: config.provider,
+      method,
+      url: redactUrl(url),
+    })
+
+    const resp = await fetch(url, { method, headers })
+    if (!resp.ok) {
+      logTaskWarn('VideoTask', 'refresh-poll-not-ready', { id, taskId: record.taskId, status: resp.status })
+      return getVideoGenerationRecord(id)
+    }
+
+    const result = await resp.json() as any
+    const pollResp = adapter.parsePollResponse(result, config)
+
+    if (pollResp.status === 'completed' && pollResp.videoUrl) {
+      logTaskSuccess('VideoTask', 'refresh-poll-complete', { id, taskId: record.taskId, videoUrl: pollResp.videoUrl })
+      await handleVideoComplete(id, pollResp.videoUrl, record.duration, record.storyboardId)
+      return getVideoGenerationRecord(id)
+    }
+
+    if (pollResp.status === 'failed') {
+      const errorMsg = pollResp.error || 'Video generation failed'
+      db.update(schema.videoGenerations)
+        .set({ status: 'failed', errorMsg, updatedAt: now() })
+        .where(eq(schema.videoGenerations.id, id))
+        .run()
+      logTaskError('VideoTask', 'refresh-poll-failed', { id, taskId: record.taskId, error: errorMsg })
+      return getVideoGenerationRecord(id)
+    }
+  } catch (err: any) {
+    logTaskWarn('VideoTask', 'refresh-poll-error', { id, taskId: record.taskId, error: err.message })
+  }
+
+  return getVideoGenerationRecord(id)
 }
 
 async function processVideoGeneration(id: number, config: AIConfig) {
@@ -92,7 +188,7 @@ async function processVideoGeneration(id: number, config: AIConfig) {
     const resolvedReferenceImageUrls = await normalizeVideoReferenceUrls(record.referenceImageUrls)
 
     // 使用 Adapter 构建请求
-    const { url, method, headers, body } = adapter.buildGenerateRequest(config, {
+    const { url, method, headers, body } = await adapter.buildGenerateRequest(config, {
       id: record.id,
       model: record.model,
       prompt: record.prompt,
@@ -101,8 +197,16 @@ async function processVideoGeneration(id: number, config: AIConfig) {
       firstFrameUrl: resolvedFirstFrameUrl,
       lastFrameUrl: resolvedLastFrameUrl,
       referenceImageUrls: resolvedReferenceImageUrls ? JSON.stringify(resolvedReferenceImageUrls) : null,
+      audioUrl: record.audioUrl,
       duration: record.duration,
+      fps: record.fps,
+      frameCount: record.frameCount,
+      resolution: record.resolution,
       aspectRatio: record.aspectRatio,
+      style: record.style,
+      motionLevel: record.motionLevel,
+      cameraMotion: record.cameraMotion,
+      seed: record.seed,
     })
     logTaskProgress('VideoTask', 'request', {
       id,
@@ -161,6 +265,23 @@ async function processVideoGeneration(id: number, config: AIConfig) {
   }
 }
 
+function getVideoGenerationRecord(id: number): any | null {
+  const rows = db.select().from(schema.videoGenerations).where(eq(schema.videoGenerations.id, id)).all()
+  return rows[0] || null
+}
+
+function normalizeOptionalUrl(value: string | null | undefined): string | undefined {
+  const raw = String(value || '').trim()
+  return raw || undefined
+}
+
+function resolveStoryboardAudioUrl(storyboardId?: number | null): string | undefined {
+  const id = Number(storyboardId)
+  if (!Number.isFinite(id) || id <= 0) return undefined
+  const [storyboard] = db.select().from(schema.storyboards).where(eq(schema.storyboards.id, id)).all()
+  return normalizeOptionalUrl(storyboard?.ttsAudioUrl)
+}
+
 async function normalizeVideoReferenceUrl(value: string | null | undefined): Promise<string | null> {
   const raw = String(value || '').trim()
   if (!raw) return null
@@ -214,7 +335,7 @@ async function pollVideoTask(id: number, config: AIConfig, taskId: string, story
       if (!resp.ok) continue
       const result = await resp.json() as any
 
-      const pollResp = adapter.parsePollResponse(result)
+      const pollResp = adapter.parsePollResponse(result, config)
 
       if (pollResp.status === 'completed' && pollResp.videoUrl) {
         logTaskSuccess('VideoTask', 'poll-complete', { id, taskId, videoUrl: pollResp.videoUrl })

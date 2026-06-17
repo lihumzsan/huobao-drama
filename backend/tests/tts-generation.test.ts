@@ -28,7 +28,7 @@ test('falls back to ComfyUI audio and injects prompt text when no audio config e
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input)
 
-    if (url === 'http://127.0.0.1:8188/prompt') {
+    if (url === 'http://127.0.0.1:8878/prompt') {
       promptPosted = true
       const body = JSON.parse(String(init?.body || '{}'))
       assert.equal(init?.method, 'POST')
@@ -40,7 +40,7 @@ test('falls back to ComfyUI audio and injects prompt text when no audio config e
       })
     }
 
-    if (url === 'http://127.0.0.1:8188/history/prompt-1') {
+    if (url === 'http://127.0.0.1:8878/history/prompt-1') {
       return new Response(JSON.stringify({
         prompt1: {
           status: { status_str: 'success', completed: true },
@@ -58,7 +58,7 @@ test('falls back to ComfyUI audio and injects prompt text when no audio config e
       })
     }
 
-    if (url === 'http://127.0.0.1:8188/view?filename=voice.mp3&subfolder=audio&type=output') {
+    if (url === 'http://127.0.0.1:8878/view?filename=voice.mp3&subfolder=audio&type=output') {
       return new Response(Buffer.from([1, 2, 3, 4]), {
         status: 200,
         headers: { 'content-type': 'audio/mpeg' },

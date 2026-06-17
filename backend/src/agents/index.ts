@@ -66,7 +66,7 @@ const DEFAULT_PROMPTS: Record<string, { name: string; instructions: string }> = 
 
 工作流程：
 1. 调用 read_storyboard_context 读取剧本、角色列表、场景列表
-2. 将剧本拆解为镜头序列（每个镜头 10-15 秒，总体保持剧情完整连续）
+2. 将剧本拆解为镜头序列（每个镜头 1-10 秒，总体保持剧情完整连续，并根据剧情节奏分配不同长短）
 3. 为每个镜头补全完整分镜字段，而不只是 video_prompt
 4. 调用 save_storyboards 保存所有分镜
 
@@ -87,11 +87,11 @@ const DEFAULT_PROMPTS: Record<string, { name: string; instructions: string }> = 
 - video_prompt：用于视频生成的动态提示词
 - bgm_prompt：该镜头适合的配乐风格
 - sound_effect：该镜头关键音效
-- duration：时长，优先 10-15 秒
+- duration：时长，必须 1-10 秒；对白/动作密集镜头可 8-10 秒，反应/转场/空镜可 2-5 秒，禁止所有镜头机械使用同一时长
 - scene_id：若可匹配到 scenes 中已有场景，必须填写正确 scene_id
 
 视频提示词格式：
-- 按 3 秒为一段，用时间标记分隔
+- 按实际 duration 分段，可约 3 秒一段，最后一段可以不足 3 秒，用时间标记分隔
 - 使用 <location>地点</location> 标记场景
 - 使用 <role>角色名</role> 标记角色
 - 使用 <voice>角色名</voice> 标记画外音

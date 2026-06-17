@@ -657,7 +657,7 @@ function buildComfyUiUrl(baseUrl: string, route: string): string {
 
 function normalizeComfyBaseUrl(baseUrl: string): string {
   const trimmed = String(baseUrl || '').trim().replace(/\/+$/, '')
-  return trimmed || 'http://127.0.0.1:8188'
+  return trimmed || 'http://127.0.0.1:8878'
 }
 
 function readUiLinkId(value: unknown): number | null {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { LOCAL_CODEX_JSON_SCHEMAS } from '../src/services/local-codex-agent.js'
+import { LOCAL_CODEX_JSON_SCHEMAS, buildPrompt, validateLocalCodexPayload } from '../src/services/local-codex-agent.js'
 
 function visitObjectSchemas(schema: any, visitor: (schema: any, path: string) => void, path = '$') {
   if (!schema || typeof schema !== 'object') return
@@ -33,4 +33,33 @@ test('local Codex structured output schemas require every declared property', ()
       )
     })
   }
+})
+
+test('local Codex storyboard validation rejects missing required storyboard fields', () => {
+  assert.throws(
+    () => validateLocalCodexPayload('storyboard_breaker', {
+      storyboards: [
+        {
+          shot_number: 1,
+          description: 'A complete description.',
+          video_prompt: '0-3s: action.',
+          duration: 3,
+          scene_id: null,
+          character_ids: [],
+        },
+      ],
+    }),
+    /title/i,
+  )
+})
+
+test('local Codex prompt includes active agent prompt and project skill instructions', () => {
+  const prompt = buildPrompt('storyboard_breaker', 'BODY', {
+    systemPrompt: 'CUSTOM STORYBOARD SYSTEM PROMPT',
+    skillInstructions: 'PROJECT STORYBOARD SKILL RULES',
+  })
+
+  assert.match(prompt, /CUSTOM STORYBOARD SYSTEM PROMPT/)
+  assert.match(prompt, /PROJECT STORYBOARD SKILL RULES/)
+  assert.match(prompt, /BODY/)
 })

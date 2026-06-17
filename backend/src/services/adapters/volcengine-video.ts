@@ -12,6 +12,7 @@ import type {
   VideoPollResponse,
 } from './types'
 import { joinProviderUrl } from './url'
+import { normalizeVideoDuration } from '../duration.js'
 
 export class VolcEngineVideoAdapter implements VideoProviderAdapter {
   provider = 'volcengine'
@@ -103,8 +104,6 @@ export class VolcEngineVideoAdapter implements VideoProviderAdapter {
   }
 
   private normalizeDuration(duration?: number | null): number {
-    const parsed = Math.round(Number(duration || 5))
-    if (!Number.isFinite(parsed)) return 5
-    return Math.min(12, Math.max(4, parsed))
+    return normalizeVideoDuration(duration, { min: 4 })
   }
 }

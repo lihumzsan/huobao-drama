@@ -435,12 +435,13 @@ const serviceMeta = {
 const providerPresets = {
   image: {
     codex: { label: 'Codex 本机', baseUrl: 'local-codex://image-cli', models: [LOCAL_CODEX_MODEL] },
-    comfyui: { label: 'ComfyUI 本地', baseUrl: 'http://127.0.0.1:8188', models: [] },
+    comfyui: { label: 'ComfyUI 本地', baseUrl: 'http://127.0.0.1:8878', models: [] },
     chatfire: { label: 'ChatFire 推荐', baseUrl: 'https://api.chatfire.site', models: ['doubao-seedream-4-5-251128'] },
     gemini: { label: 'Gemini 推荐', baseUrl: 'https://api.chatfire.site', models: ['gemini-3-pro-image-preview'] },
     volcengine: { label: '火山推荐', baseUrl: 'https://ark.cn-beijing.volces.com', models: ['doubao-seedream-4-0-250828'] },
   },
   video: {
+    comfyui: { label: 'ComfyUI 本地', baseUrl: 'http://127.0.0.1:8878', models: ['basevideo/Seedance2.0_Bernini_01_480p_10s'] },
     volcengine: { label: '火宝视频', baseUrl: 'https://api.chatfire.site/volcengine', models: ['doubao-seedance-1-5-pro-251215'] },
     vidu: { label: 'Vidu 推荐', baseUrl: 'https://api.vidu.com', models: ['viduq3-turbo'] },
     ali: { label: '阿里推荐', baseUrl: 'https://dashscope.aliyuncs.com', models: ['wan2.6-i2v-flash'] },
@@ -469,7 +470,7 @@ const endpointPrefixes = {
 
 const endpointHint = computed(() => {
   const provider = cfgForm.provider
-  const base = cfgForm.base_url || (provider === 'comfyui' ? 'http://127.0.0.1:8188' : 'https://...')
+  const base = cfgForm.base_url || (provider === 'comfyui' ? 'http://127.0.0.1:8878' : 'https://...')
   const prefix = endpointPrefixes[provider] || ''
   if (!provider) return '选择服务商后显示推荐端点前缀'
   if (provider === 'codex') return '本机 Codex CLI（不使用 Base URL / API Key）'
@@ -641,8 +642,8 @@ const defaultPrompts = {
 
 工作流程：
 1. 调用 read_storyboard_context 读取剧本、角色列表、场景列表
-2. 将剧本拆解为镜头序列（每个镜头 10-15 秒）
-3. 为每个镜头生成视频提示词（video_prompt）
+2. 将剧本拆解为镜头序列（每个镜头 1-10 秒，并根据剧情节奏分配不同长短）
+3. 为每个镜头生成视频提示词（video_prompt），时间码必须匹配该镜头 duration，最后一段可以不足 3 秒
 4. 调用 save_storyboards 保存所有分镜`,
   voice_assigner: `你是配音导演，擅长为角色选择合适的音色。
 

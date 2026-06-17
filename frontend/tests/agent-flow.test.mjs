@@ -30,6 +30,22 @@ test('agent composable waits for completion refresh before clearing running stat
   assert.match(source, /await onDone\?\.\(\)/)
 })
 
+test('agent composable shows backend completion text when available', async () => {
+  const source = await readFile(path.resolve('app/composables/useAgent.ts'), 'utf8')
+
+  assert.match(source, /const result = await api\.post<any>/)
+  assert.match(source, /toast\.success\(result\?\.text \|\| '完成'\)/)
+})
+
+test('storyboard re-breakdown confirms before replacing generated assets', async () => {
+  const source = await readFile(path.resolve('app/pages/drama/[id]/episode/[episodeNumber].vue'), 'utf8')
+
+  assert.match(source, /function hasStoryboardGeneratedAssets\(sb\)/)
+  assert.match(source, /sbs\.value\.some\(hasStoryboardGeneratedAssets\)/)
+  assert.match(source, /window\.confirm\('重新拆解会替换当前分镜/)
+  assert.match(source, /if \(!confirmed\) return/)
+})
+
 test('voice generation stays callable so backend can fall back to ComfyUI audio', async () => {
   const source = await readFile(path.resolve('app/pages/drama/[id]/episode/[episodeNumber].vue'), 'utf8')
 
@@ -55,6 +71,16 @@ test('voice generation stays callable so backend can fall back to ComfyUI audio'
     source,
     /async function batchShotTTS\(\) \{[\s\S]*Promise\.allSettled\(pending\.map\(sb => storyboardAPI\.generateTTS/,
   )
+})
+
+test('video generation labels use the ComfyUI fallback config', async () => {
+  const source = await readFile(path.resolve('app/pages/drama/[id]/episode/[episodeNumber].vue'), 'utf8')
+
+  assert.match(source, /const defaultComfyUiVideoConfig = Object\.freeze\(\{[\s\S]*provider: 'comfyui'[\s\S]*basevideo\/Seedance2\.0_Bernini_01_480p_10s/)
+  assert.match(source, /const effectiveVideoConfig = computed/)
+  assert.match(source, /const lockedVideoConfigLabel = computed\(\(\) => configLabel\(effectiveVideoConfig\.value\)\)/)
+  assert.doesNotMatch(source, /canGenerateVideo/)
+  assert.doesNotMatch(source, /ensureVideoConfigReady/)
 })
 
 test('voice assignment character cards show character and voice images', async () => {

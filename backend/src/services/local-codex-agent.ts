@@ -1,10 +1,24 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
+import { loadAgentSkills } from '../agents/skills.js'
 import { now } from '../utils/response.js'
 import { runCodexCliJson } from './codex-cli.js'
 import { buildSceneStoragePrompt } from './scene-image-prompt.js'
+import {
+  assertStoryboardContextReady,
+  assertStoryboardSequence,
+  assertStoryboardVideoPromptTiming,
+  buildVideoGenerationConstraints,
+} from './storyboard-validation.js'
+import {
+  DEFAULT_STORYBOARD_DURATION_SECONDS,
+  MAX_STORYBOARD_DURATION_SECONDS,
+  MIN_STORYBOARD_DURATION_SECONDS,
+  assertStoryboardDurationRhythm,
+  requireStoryboardDuration,
+} from './duration.js'
 
 export type LocalCodexAgentType =
   | 'script_rewriter'
@@ -40,26 +54,26 @@ export const LOCAL_CODEX_VIRTUAL_CONFIG = {
 } as const
 
 const nonEmptyString = z.string().trim().min(1)
-const optionalText = z.string().optional().default('')
-const optionalNullableId = z.number().int().positive().nullable().optional()
+const textString = z.string()
+const nullableId = z.number().int().positive().nullable()
 
 const scriptRewriteSchema = z.object({
   content: nonEmptyString,
-  notes: z.string().optional(),
+  notes: textString,
 })
 
 const extractedCharacterSchema = z.object({
   name: nonEmptyString,
-  role: optionalText,
-  description: optionalText,
-  appearance: optionalText,
-  personality: optionalText,
+  role: textString,
+  description: textString,
+  appearance: textString,
+  personality: textString,
 })
 
 const extractedSceneSchema = z.object({
   location: nonEmptyString,
-  time: z.string().optional().default(''),
-  prompt: z.string().optional().default(''),
+  time: textString,
+  prompt: textString,
 })
 
 const extractorSchema = z.object({
@@ -69,24 +83,24 @@ const extractorSchema = z.object({
 
 const storyboardSchema = z.object({
   shot_number: z.number().int().positive(),
-  title: z.string().optional().default(''),
-  shot_type: z.string().optional().default(''),
-  angle: z.string().optional().default(''),
-  movement: z.string().optional().default(''),
-  location: z.string().optional().default(''),
-  time: z.string().optional().default(''),
-  action: z.string().optional().default(''),
-  dialogue: z.string().optional().default(''),
+  title: textString,
+  shot_type: textString,
+  angle: textString,
+  movement: textString,
+  location: textString,
+  time: textString,
+  action: textString,
+  dialogue: textString,
   description: nonEmptyString,
-  result: z.string().optional().default(''),
-  atmosphere: z.string().optional().default(''),
-  image_prompt: z.string().optional().default(''),
+  result: textString,
+  atmosphere: textString,
+  image_prompt: textString,
   video_prompt: nonEmptyString,
-  bgm_prompt: z.string().optional().default(''),
-  sound_effect: z.string().optional().default(''),
-  duration: z.number().int().positive().max(120).optional().default(10),
-  scene_id: optionalNullableId,
-  character_ids: z.array(z.number().int().positive()).optional().default([]),
+  bgm_prompt: textString,
+  sound_effect: textString,
+  duration: z.number().int().min(MIN_STORYBOARD_DURATION_SECONDS).max(MAX_STORYBOARD_DURATION_SECONDS),
+  scene_id: nullableId,
+  character_ids: z.array(z.number().int().positive()),
 })
 
 const storyboardBreakerSchema = z.object({
@@ -96,7 +110,7 @@ const storyboardBreakerSchema = z.object({
 const voiceAssignmentSchema = z.object({
   character_id: z.number().int().positive(),
   voice_id: nonEmptyString,
-  reason: z.string().optional().default(''),
+  reason: textString,
 })
 
 const voiceAssignerSchema = z.object({
@@ -198,7 +212,7 @@ export const LOCAL_CODEX_JSON_SCHEMAS: Record<LocalCodexAgentType | 'health_chec
             video_prompt: { type: 'string', minLength: 1 },
             bgm_prompt: { type: 'string' },
             sound_effect: { type: 'string' },
-            duration: { type: 'integer', minimum: 1, maximum: 120 },
+            duration: { type: 'integer', minimum: MIN_STORYBOARD_DURATION_SECONDS, maximum: MAX_STORYBOARD_DURATION_SECONDS },
             scene_id: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
             character_ids: { type: 'array', items: { type: 'integer', minimum: 1 } },
           },
@@ -310,6 +324,11 @@ export interface RunLocalCodexGridPromptOptions {
   referenceLegend?: string
 }
 
+export interface LocalCodexPromptOptions {
+  systemPrompt?: string | null
+  skillInstructions?: string | null
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '../../..')
 
@@ -363,7 +382,7 @@ export async function runLocalCodexGridPrompt(options: RunLocalCodexGridPromptOp
     `必须严格生成 exactly ${options.rows * options.cols} visible panels，不要合并格子，不要缺格。`,
     '提示词尽量使用英文，保留“格1/格2”等格子编号。',
     `镜头信息 JSON：${JSON.stringify(shots)}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'grid_prompt_generator'))
 
   const payload = await runCodexForAgent('grid_prompt_generator', prompt)
   return validateLocalCodexPayload('grid_prompt_generator', payload)
@@ -385,7 +404,7 @@ async function runScriptRewriter(options: RunLocalCodexAgentOptions): Promise<Lo
     '- 对白：角色名：（状态/表情）台词内容',
     '- 每个场景 30-60 秒内容',
     `原始内容：\n${source}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'script_rewriter'))
 
   const payload = validateLocalCodexPayload('script_rewriter', await runCodexForAgent('script_rewriter', prompt))
   db.update(schema.episodes)
@@ -422,7 +441,7 @@ async function runExtractor(options: RunLocalCodexAgentOptions): Promise<LocalCo
     `已有角色 JSON：${JSON.stringify(existingCharacters)}`,
     `已有场景 JSON：${JSON.stringify(existingScenes)}`,
     `剧本：\n${script}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'extractor'))
 
   const payload = validateLocalCodexPayload('extractor', await runCodexForAgent('extractor', prompt))
   const charResult = saveExtractedCharacters(db, schema, options.episodeId, options.dramaId, payload.characters)
@@ -438,16 +457,20 @@ async function runExtractor(options: RunLocalCodexAgentOptions): Promise<LocalCo
 async function runStoryboardBreaker(options: RunLocalCodexAgentOptions): Promise<LocalCodexAgentResult> {
   const { db, schema } = await import('../db/index.js')
   const context = readStoryboardContext(db, schema, options.episodeId, options.dramaId)
+  assertStoryboardContextReady(context)
+  const videoConstraints = readEpisodeVideoConstraints(db, schema, options.episodeId)
 
   const prompt = buildPrompt('storyboard_breaker', [
     '你是资深影视分镜师。请将剧本拆解为镜头序列，并生成后续图片、视频、配音、音效、合成都可用的完整字段。',
     `用户要求：${options.message}`,
-    '每个镜头优先 10-15 秒。scene_id 必须来自 scenes；character_ids 必须来自 characters；无角色镜头使用空数组。',
-    'video_prompt 按 3 秒为一段，可使用 <location>、<role>、<voice>、<n> 标签。',
+    '每个镜头 duration 必须为 1-10 秒，并且必须根据剧情节奏分配长短：对白/动作密集镜头可 8-10 秒，反应/转场/空镜可 2-5 秒，禁止所有镜头机械使用同一时长。scene_id 必须来自 scenes；character_ids 必须来自 characters；无角色镜头使用空数组。',
+    'video_prompt 必须匹配该镜头 duration，可按约 3 秒一段描述，最后一段可以不足 3 秒；不得出现超过 duration 的时间码。可使用 <location>、<role>、<voice>、<n> 标签。',
+    `视频生成约束 JSON：${JSON.stringify(videoConstraints)}`,
     `上下文 JSON：${JSON.stringify(context)}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'storyboard_breaker'))
 
   const payload = validateLocalCodexPayload('storyboard_breaker', await runCodexForAgent('storyboard_breaker', prompt))
+  assertStoryboardDurationRhythm(payload.storyboards)
   const saveResult = saveStoryboards(db, schema, options.episodeId, payload.storyboards)
 
   return agentResult('storyboard_breaker', `分镜已保存，共 ${saveResult.count} 个镜头，总时长 ${saveResult.total_duration} 秒`, {
@@ -477,7 +500,7 @@ async function runVoiceAssigner(options: RunLocalCodexAgentOptions): Promise<Loc
     '只能从 voices 列表中选择 voice_id；每个角色都必须分配。',
     `characters JSON：${JSON.stringify(characters)}`,
     `voices JSON：${JSON.stringify(voices)}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'voice_assigner'))
 
   const payload = validateLocalCodexPayload('voice_assigner', await runCodexForAgent('voice_assigner', prompt))
   const voiceIds = new Set(voices.map((voice: any) => voice.id))
@@ -512,7 +535,7 @@ async function runGenericGridPromptGenerator(options: RunLocalCodexAgentOptions)
     '如果没有明确宫格行列，默认返回 1 个 cell_prompts 项。',
     `characters JSON：${JSON.stringify(characters)}`,
     `scenes JSON：${JSON.stringify(scenes)}`,
-  ].join('\n'))
+  ].join('\n'), readLocalAgentPromptContext(db, schema, 'grid_prompt_generator'))
 
   const payload = validateLocalCodexPayload('grid_prompt_generator', await runCodexForAgent('grid_prompt_generator', prompt))
   return agentResult('grid_prompt_generator', '图片提示词已生成', payload)
@@ -527,13 +550,43 @@ async function runCodexForAgent(agentType: LocalCodexAgentType, prompt: string) 
   })
 }
 
-function buildPrompt(agentType: LocalCodexAgentType, body: string) {
-  return [
+export function buildPrompt(agentType: LocalCodexAgentType, body: string, options: LocalCodexPromptOptions = {}) {
+  const sections = [
     `你正在为火宝短剧执行 ${agentType} 文本处理任务。`,
     '你只负责分析和生成结构化 JSON；不要尝试修改文件、运行数据库命令或保存任何内容。',
     '最终答案必须严格符合传入的 JSON Schema。',
-    body,
-  ].join('\n\n')
+  ]
+
+  const systemPrompt = options.systemPrompt?.trim()
+  if (systemPrompt) {
+    sections.push(`当前 Agent 配置指令：\n${systemPrompt}`)
+  }
+
+  const skillInstructions = options.skillInstructions?.trim()
+  if (skillInstructions) {
+    sections.push(`项目 Skill 规范：\n${skillInstructions}`)
+  }
+
+  sections.push(body)
+  return sections.join('\n\n')
+}
+
+function readLocalAgentPromptContext(db: any, schema: any, agentType: LocalCodexAgentType): LocalCodexPromptOptions {
+  const rows = db.select().from(schema.agentConfigs)
+    .where(and(eq(schema.agentConfigs.agentType, agentType), isNull(schema.agentConfigs.deletedAt)))
+    .all()
+  const config = rows.find((row: any) => row.isActive) || rows[0]
+  return {
+    systemPrompt: config?.systemPrompt || '',
+    skillInstructions: loadAgentSkills(agentType),
+  }
+}
+
+function readEpisodeVideoConstraints(db: any, schema: any, episodeId: number) {
+  const [episode] = db.select().from(schema.episodes).where(eq(schema.episodes.id, episodeId)).all()
+  if (!episode?.videoConfigId) return buildVideoGenerationConstraints(null)
+  const [config] = db.select().from(schema.aiServiceConfigs).where(eq(schema.aiServiceConfigs.id, episode.videoConfigId)).all()
+  return buildVideoGenerationConstraints(config)
 }
 
 function agentResult(agentType: LocalCodexAgentType, text: string, payload: unknown): LocalCodexAgentResult {
@@ -642,7 +695,7 @@ function readStoryboardContext(db: any, schema: any, episodeId: number, dramaId:
   const characters = db.select().from(schema.characters)
     .where(eq(schema.characters.dramaId, dramaId)).all()
     .filter((char: any) => !char.deletedAt)
-    .filter((char: any) => !linkedCharacterIds.size || linkedCharacterIds.has(char.id))
+    .filter((char: any) => linkedCharacterIds.has(char.id))
     .map((char: any) => ({
       id: char.id,
       name: char.name,
@@ -654,7 +707,7 @@ function readStoryboardContext(db: any, schema: any, episodeId: number, dramaId:
   const scenes = db.select().from(schema.scenes)
     .where(eq(schema.scenes.dramaId, dramaId)).all()
     .filter((scene: any) => !scene.deletedAt)
-    .filter((scene: any) => !linkedSceneIds.size || linkedSceneIds.has(scene.id))
+    .filter((scene: any) => linkedSceneIds.has(scene.id))
     .map((scene: any) => ({
       id: scene.id,
       location: scene.location,
@@ -666,6 +719,10 @@ function readStoryboardContext(db: any, schema: any, episodeId: number, dramaId:
 }
 
 function saveStoryboards(db: any, schema: any, episodeId: number, storyboards: z.infer<typeof storyboardSchema>[]) {
+  assertStoryboardSequence(storyboards)
+  assertStoryboardVideoPromptTiming(storyboards)
+  const sortedStoryboards = [...storyboards].sort((a, b) => a.shot_number - b.shot_number)
+  const durations = assertStoryboardDurationRhythm(sortedStoryboards)
   const episodeSceneIds = new Set(db.select().from(schema.episodeScenes)
     .where(eq(schema.episodeScenes.episodeId, episodeId)).all()
     .map((link: any) => link.sceneId))
@@ -673,7 +730,7 @@ function saveStoryboards(db: any, schema: any, episodeId: number, storyboards: z
     .where(eq(schema.episodeCharacters.episodeId, episodeId)).all()
     .map((link: any) => link.characterId))
 
-  for (const storyboard of storyboards) {
+  for (const storyboard of sortedStoryboards) {
     if (storyboard.scene_id != null && !episodeSceneIds.has(storyboard.scene_id)) {
       throw new Error(`scene_id ${storyboard.scene_id} 不属于当前集`)
     }
@@ -684,51 +741,54 @@ function saveStoryboards(db: any, schema: any, episodeId: number, storyboards: z
   }
 
   const ts = now()
-  const existingStoryboardIds = db.select().from(schema.storyboards)
-    .where(eq(schema.storyboards.episodeId, episodeId)).all()
-    .map((storyboard: any) => storyboard.id)
-  for (const storyboardId of existingStoryboardIds) {
-    db.delete(schema.storyboardCharacters)
-      .where(eq(schema.storyboardCharacters.storyboardId, storyboardId))
-      .run()
-  }
-  db.delete(schema.storyboards).where(eq(schema.storyboards.episodeId, episodeId)).run()
-
   let totalDuration = 0
-  for (const storyboard of storyboards) {
-    const res = db.insert(schema.storyboards).values({
-      episodeId,
-      storyboardNumber: storyboard.shot_number,
-      title: storyboard.title,
-      shotType: storyboard.shot_type,
-      angle: storyboard.angle,
-      movement: storyboard.movement,
-      location: storyboard.location,
-      time: storyboard.time,
-      action: storyboard.action,
-      dialogue: storyboard.dialogue,
-      description: storyboard.description,
-      result: storyboard.result,
-      atmosphere: storyboard.atmosphere,
-      imagePrompt: storyboard.image_prompt,
-      videoPrompt: storyboard.video_prompt,
-      bgmPrompt: storyboard.bgm_prompt,
-      soundEffect: storyboard.sound_effect,
-      sceneId: storyboard.scene_id,
-      duration: storyboard.duration || 10,
-      createdAt: ts,
-      updatedAt: ts,
-    }).run()
-    syncStoryboardCharacters(db, schema, Number(res.lastInsertRowid), storyboard.character_ids || [])
-    totalDuration += storyboard.duration || 10
-  }
+  db.transaction((tx: any) => {
+    const existingStoryboardIds = tx.select().from(schema.storyboards)
+      .where(eq(schema.storyboards.episodeId, episodeId)).all()
+      .map((storyboard: any) => storyboard.id)
+    for (const storyboardId of existingStoryboardIds) {
+      tx.delete(schema.storyboardCharacters)
+        .where(eq(schema.storyboardCharacters.storyboardId, storyboardId))
+        .run()
+    }
+    tx.delete(schema.storyboards).where(eq(schema.storyboards.episodeId, episodeId)).run()
 
-  db.update(schema.episodes)
-    .set({ duration: Math.ceil(totalDuration / 60), updatedAt: ts })
-    .where(eq(schema.episodes.id, episodeId))
-    .run()
+    for (const [index, storyboard] of sortedStoryboards.entries()) {
+      const duration = durations[index] ?? requireStoryboardDuration(storyboard.duration)
+      const res = tx.insert(schema.storyboards).values({
+        episodeId,
+        storyboardNumber: storyboard.shot_number,
+        title: storyboard.title,
+        shotType: storyboard.shot_type,
+        angle: storyboard.angle,
+        movement: storyboard.movement,
+        location: storyboard.location,
+        time: storyboard.time,
+        action: storyboard.action,
+        dialogue: storyboard.dialogue,
+        description: storyboard.description,
+        result: storyboard.result,
+        atmosphere: storyboard.atmosphere,
+        imagePrompt: storyboard.image_prompt,
+        videoPrompt: storyboard.video_prompt,
+        bgmPrompt: storyboard.bgm_prompt,
+        soundEffect: storyboard.sound_effect,
+        sceneId: storyboard.scene_id,
+        duration,
+        createdAt: ts,
+        updatedAt: ts,
+      }).run()
+      syncStoryboardCharacters(tx, schema, Number(res.lastInsertRowid), storyboard.character_ids || [])
+      totalDuration += duration
+    }
 
-  return { count: storyboards.length, total_duration: totalDuration }
+    tx.update(schema.episodes)
+      .set({ duration: Math.ceil(totalDuration / 60), updatedAt: ts })
+      .where(eq(schema.episodes.id, episodeId))
+      .run()
+  })
+
+  return { count: sortedStoryboards.length, total_duration: totalDuration }
 }
 
 function syncStoryboardCharacters(db: any, schema: any, storyboardId: number, characterIds: number[]) {

@@ -14,6 +14,7 @@ import { ViduVideoAdapter } from './vidu-video'
 import { AliImageAdapter } from './ali-image'
 import { AliVideoAdapter } from './ali-video'
 import { ComfyUiImageAdapter } from './comfyui-image'
+import { ComfyUiVideoAdapter } from './comfyui-video'
 import { CodexImageAdapter } from './codex-image'
 import type { ImageProviderAdapter, VideoProviderAdapter, TTSProviderAdapter } from './types'
 
@@ -36,6 +37,7 @@ export const videoAdapters: Record<string, VideoProviderAdapter> = {
   volcengine: new VolcEngineVideoAdapter(),
   vidu: new ViduVideoAdapter(),
   ali: new AliVideoAdapter(),
+  comfyui: new ComfyUiVideoAdapter(),
   // Chatfire 视频 - 待确认 API 格式
 }
 

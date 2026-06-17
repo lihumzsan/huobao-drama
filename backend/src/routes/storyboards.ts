@@ -6,6 +6,7 @@ import { toSnakeCase } from '../utils/transform.js'
 import { generateTTS } from '../services/tts-generation.js'
 import { isNarratorSpeaker, parseDialogueForTTS as parseDialogueForTTSShared } from '../services/tts-dialogue.js'
 import { logTaskError, logTaskPayload, logTaskProgress, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
+import { requireStoryboardDuration } from '../services/duration.js'
 
 const app = new Hono()
 
@@ -78,6 +79,12 @@ app.post('/', async (c) => {
   })
   logTaskPayload('StoryboardAPI', 'create body', body)
   validateStoryboardBindings(body.episode_id, body.scene_id, body.character_ids)
+  let duration: number
+  try {
+    duration = requireStoryboardDuration(body.duration)
+  } catch (err: any) {
+    return badRequest(c, err.message)
+  }
   const res = db.insert(schema.storyboards).values({
     episodeId: body.episode_id,
     storyboardNumber: body.storyboard_number || 1,
@@ -86,7 +93,7 @@ app.post('/', async (c) => {
     action: body.action,
     dialogue: body.dialogue,
     sceneId: body.scene_id,
-    duration: body.duration || 10,
+    duration,
     createdAt: ts,
     updatedAt: ts,
   }).run()
@@ -129,6 +136,13 @@ app.put('/:id', async (c) => {
   const updates: Record<string, any> = { updatedAt: now() }
   for (const [snakeKey, camelKey] of Object.entries(fieldMap)) {
     if (snakeKey in body) updates[camelKey] = body[snakeKey]
+  }
+  if ('duration' in body) {
+    try {
+      updates.duration = requireStoryboardDuration(body.duration)
+    } catch (err: any) {
+      return badRequest(c, err.message)
+    }
   }
 
   if ('dialogue' in body) {
